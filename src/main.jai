@@ -6,8 +6,8 @@ Input :: #import "Input";
 #import "Window_Creation";
 
 #load "std.jai";
-
-Raylib :: #import "raylib";
+#load "mesh.jai";
+#load "shader.jai";
 
 Window_State :: struct {
 	handle : Window_Type;
@@ -22,13 +22,19 @@ Simp_State :: struct {
 };
 
 Scene_State :: struct {
-	camera : Raylib.Camera;
+	d_down : bool = false;
+	q_down : bool = false;
 
-	model : Raylib.Model;
+	shader : Shader;
+	mesh   : Mesh;
+
+	camera_speed := 0.5;
+	camera_pos : Vector3;
 };
 
 window_state : Window_State;
 simp_state : Simp_State;
+
 
 main :: () {
 	#if OS == .WINDOWS {
@@ -37,64 +43,83 @@ main :: () {
 		Windows.timeBeginPeriod(1);
 	}
 
-	Raylib.InitWindow(xx window_state.width, xx window_state.height, "Solide");
+	window_state.handle = create_window(window_state.width, window_state.height, "Solide");
+	window_state.width, window_state.height = Simp.get_render_dimensions(window_state.handle);
+
+	Simp.set_render_target(window_state.handle);
 
 	scene : Scene_State;
-	scene.camera.position = .{-250, 0, 0};
-	scene.camera.target = .{0, 0, 0};
-	scene.camera.up = .{0, 1, 0};
-	scene.camera.fovy = 60;
-	scene.camera.projection = Raylib.CameraProjection.CAMERA_PERSPECTIVE;
+	scene.shader = shader_init();
+	scene.mesh   = load_mesh("model.obj");
+	scene.camera_pos.x = 0;
+	scene.camera_pos.y = 100;
+	scene.camera_pos.z = -100;
 
-	scene.model = Raylib.LoadModel("model.obj");
+	timer := current_time_monotonic();
 
+	quit := false;
+	while !quit {
+		dt := cast(float) to_float64_seconds(current_time_monotonic() - timer);
+		timer = current_time_monotonic();
+		Input.update_window_events();
 
-	mesh := scene.model.meshes;
-	colors : [..]u8;
-	array_resize(*colors, mesh.vertexCount * 4);
+		for Input.get_window_resizes() {
+			Simp.update_window(it.window);
 
-	for 0..mesh.vertexCount-1 {
-		colors[it * 4 + 0] = 255;
-		colors[it * 4 + 1] = 0;
-		colors[it * 4 + 2] = 0;
-		colors[it * 4 + 3] = 255;
-	}
+			if it.window == window_state.handle {
+				window_state.width  = it.width;
+				window_state.height = it.height;
+			}
+		}
 
-	mesh.colors = colors.data;
-	Raylib.UnloadMesh(mesh);
-	Raylib.UploadMesh(mesh, true);
+		for Input.events_this_frame {
+			if it.type == .QUIT then quit = true;
 
-	println("%", <<scene.model.meshes);
+			if it.type == {
+			case .KEYBOARD;
+				if it.key_pressed && it.key_code == .ESCAPE {
+					quit = true;
+				}
+				if it.key_code == #char "Q" then scene.q_down = xx it.key_pressed;
+				if it.key_code == #char "D" then scene.d_down = xx it.key_pressed;
+			}
+		}
 
-	Raylib.SetCameraMode(scene.camera, .CAMERA_THIRD_PERSON);
-
-	while !Raylib.WindowShouldClose() {
-		update(*scene);
+		update(*scene, dt);
 		render(*scene);
 
 		reset_temporary_storage();
 	}
 }
 
-update :: (scene: *Scene_State) {
-	Raylib.UpdateCamera(*scene.camera);
+update :: (scene: *Scene_State, dt: float) {
+	theta := atan2(scene.camera_pos.y, scene.camera_pos.x);
+
+	if scene.q_down theta += scene.camera_speed * dt;
+	if scene.d_down theta -= scene.camera_speed * dt;
+
+	l := scene.camera_pos.x * scene.camera_pos.x + scene.camera_pos.y * scene.camera_pos.y;
+	l = sqrt(l);
+
+	scene.camera_pos.x = cos(theta) * l;
+	scene.camera_pos.y = sin(theta) * l;
 }
 
 render :: (scene: *Scene_State) {
-	Raylib.BeginDrawing();
-	Raylib.ClearBackground(Raylib.DARKGRAY);
+	Simp.clear_render_target(.15, .08, .08, 1);
 
-	{
-		Raylib.BeginMode3D(scene.camera);
-		defer Raylib.EndMode3D();
+	view := make_look_at_matrix(scene.camera_pos, .{0, 0, 0}, .{0, 0, 1});
+	projection := orthographic_projection_matrix(0, 300, -100, 100, -100, 100);
+	vp := projection * view;
+	set_uniform(scene.shader, "viewProjection", vp);
 
-		Raylib.DrawCube(.{2.5, 0, 0}, 5, 0.5, 0.5, .{255, 0, 0, 255});
-		Raylib.DrawCube(.{0, 2.5, 0}, 0.5, 5, 0.5, .{0, 255, 0, 255});
-		Raylib.DrawCube(.{0, 0, 2.5}, 0.5, 0.5, 5, .{0, 0, 255, 255});
-		Raylib.DrawModel(scene.model, .{0, 0, 0}, 1, Raylib.RAYWHITE);
-	}
+	render(scene.mesh, scene.shader);
 
-	Raylib.DrawText("Test", 20, 20, 10, Raylib.BLACK);
+	Simp.swap_buffers(window_state.handle);
+}
 
-	Raylib.EndDrawing();
+render :: (mesh: Mesh, shader: Shader) {
+	glUseProgram(shader.program);
+	glBindVertexArray(mesh.vao);
+	glDrawElements(GL_TRIANGLES, xx (mesh.faces.count * 3), GL_UNSIGNED_INT, xx 0);
 }
