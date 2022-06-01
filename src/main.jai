@@ -106,8 +106,10 @@ update :: (scene: *Scene_State, dt: float) {
 }
 
 render :: (scene: *Scene_State) {
-	Simp.clear_render_target(.15, .08, .08, 1);
+	glClearColor(.15, .08, .08, 1);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+	glEnable(GL_DEPTH_TEST);
 	view := make_look_at_matrix(scene.camera_pos, .{0, 0, 0}, .{0, 0, 1});
 	projection := orthographic_projection_matrix(0, 300, -100, 100, -100, 100);
 	vp := projection * view;

@@ -1,6 +1,7 @@
 #import "String";
 #import "File";
 #import "Math";
+#import "Random";
 
 Vector3u32 :: struct {
 	x : u32 = 0;
@@ -68,7 +69,12 @@ load_mesh :: (file: string) -> Mesh {
 		else if scan2(line, "f % % %", *f.x, *f.y, *f.z) array_add(*mesh.faces, f);
 	}
 
-	for mesh.vertices array_add(*mesh.colors, .{ 1, 1, 1 });
+	for mesh.vertices {
+		c := make_vector3(
+			random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()
+		);
+		array_add(*mesh.colors, c);
+	}
 	for * mesh.faces {
 		it.x -= 1;
 		it.y -= 1;
