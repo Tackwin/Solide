@@ -46,9 +46,11 @@ load_mesh :: (file: string) -> Mesh {
 
 		v : Vector3    = ---;
 		f : Vector3u32 = ---;
+		ft : Vector3u32 = ---;
 
 		     if scan2(line, "v % % %", *v.x, *v.y, *v.z) nvert += 1;
 		else if scan2(line, "f % % %", *f.x, *f.y, *f.z) nface += 1;
+		else if scan2(line, "f %/% %/% %/%", *ft.x, *ft.y, *ft.z) array_add(*mesh.faces, f);
 	}
 
 	array_reserve(*mesh.vertices, nvert);
@@ -64,9 +66,11 @@ load_mesh :: (file: string) -> Mesh {
 
 		v : Vector3    = ---;
 		f : Vector3u32 = ---;
+		ft : Vector3u32 = ---;
 
 		     if scan2(line, "v % % %", *v.x, *v.y, *v.z) array_add(*mesh.vertices, v);
 		else if scan2(line, "f % % %", *f.x, *f.y, *f.z) array_add(*mesh.faces, f);
+		else if scan2(line, "f %/% %/% %/%", *f.x, *ft.x, *f.y, *ft.y, *f.z, *ft.z) array_add(*mesh.faces, f);
 	}
 
 	for mesh.vertices {
@@ -81,6 +85,7 @@ load_mesh :: (file: string) -> Mesh {
 		it.z -= 1;
 	}
 
+	// OEPNGL
 	buffer_vertices : [..] Mesh.Vertex;
 	for 0..nvert-1 {
 		v : Mesh.Vertex = ---;

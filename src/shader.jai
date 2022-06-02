@@ -14,13 +14,14 @@ VERT :: #string VERT
 layout (location = 0) in vec3 pos;
 layout (location = 1) in vec3 color;
 
-uniform mat4 viewProjection;
+uniform mat4 view;
+uniform mat4 projection;
 
 layout (location = 0) out vec3 frag_color;
 
 void main() {
 	frag_color = color;
-	gl_Position = vec4(pos, 1.0) * viewProjection;
+	gl_Position = vec4(pos, 1.0) * view * projection;
 }
 VERT
 
