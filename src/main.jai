@@ -30,7 +30,7 @@ Scene_State :: struct {
 	shader : Shader;
 	mesh   : Mesh;
 
-	camera_speed := 0.5;
+	camera_speed := 1.5;
 	camera_pos : Vector3;
 };
 
@@ -52,10 +52,10 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("spot.obj");
+	scene.mesh   = load_mesh("model.obj");
 	scene.camera_pos.x = 1;
 	scene.camera_pos.y = 0;
-	scene.camera_pos.z = 0;
+	scene.camera_pos.z = 1;
 
 	timer := current_time_monotonic();	
 
@@ -105,8 +105,8 @@ update :: (scene: *Scene_State, dt: float) {
 
 	if scene.q_down theta += scene.camera_speed * dt;
 	if scene.d_down theta -= scene.camera_speed * dt;
-	if scene.z_down l += 100 * scene.camera_speed * dt;
-	if scene.s_down l -= 100 * scene.camera_speed * dt;
+	if scene.z_down l += 20 * scene.camera_speed * dt;
+	if scene.s_down l -= 20 * scene.camera_speed * dt;
 
 	scene.camera_pos.x = cos(theta) * l;
 	scene.camera_pos.y = sin(theta) * l;
@@ -130,7 +130,7 @@ render :: (scene: *Scene_State) {
 render :: (mesh: Mesh, shader: Shader) {
 	glUseProgram(shader.program);
 	glBindVertexArray(mesh.vao);
-	glDrawElements(GL_TRIANGLES, xx (mesh.faces.count * 3), GL_UNSIGNED_INT, xx 0);
+	glDrawArrays(GL_TRIANGLES, xx 0, xx mesh.cpu_buffer.count);
 }
 
 look_at_matrix :: (viewpoint: Vector3, look_at: Vector3) -> Matrix4 {
