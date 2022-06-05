@@ -1,3 +1,4 @@
+
 #import "Basic";
 Simp :: #import "Simp";
 Input :: #import "Input";
@@ -8,6 +9,7 @@ Input :: #import "Input";
 #load "std.jai";
 #load "mesh.jai";
 #load "shader.jai";
+MKL :: #import "src/mkl";
 
 Window_State :: struct {
 	handle : Window_Type;
@@ -30,8 +32,13 @@ Scene_State :: struct {
 	shader : Shader;
 	mesh   : Mesh;
 
+	selected_point : s64 = -1;
+
+	run := false;
+
 	camera_speed := 1.5;
 	camera_pos : Vector3;
+	camera_target : Vector3;
 };
 
 window_state : Window_State;
@@ -53,9 +60,11 @@ main :: () {
 	scene : Scene_State;
 	scene.shader = shader_init();
 	scene.mesh   = load_mesh("model.obj");
-	scene.camera_pos.x = 1;
-	scene.camera_pos.y = 0;
-	scene.camera_pos.z = 1;
+	scene.camera_pos    = .{ 1, 0, 1 };
+	scene.camera_target = .{ 0, 0, 0 };
+
+	scene.mesh.A0 = build_vertex_edge_adjacency_matrix(scene.mesh);
+	scene.mesh.A1 = build_edge_face_adjacency_matrix(scene.mesh);
 
 	timer := current_time_monotonic();	
 
@@ -74,6 +83,8 @@ main :: () {
 			}
 		}
 
+		scene.run = false;
+
 		for Input.events_this_frame {
 			if it.type == .QUIT then quit = true;
 
@@ -86,8 +97,15 @@ main :: () {
 				if it.key_code == #char "S" then scene.s_down = xx it.key_pressed;
 				if it.key_code == #char "Q" then scene.q_down = xx it.key_pressed;
 				if it.key_code == #char "D" then scene.d_down = xx it.key_pressed;
+				if it.key_code == #char "E" then scene.selected_point += 1;
+				if it.key_code == #char "A" then scene.selected_point -= 1;
+				if it.key_code == #char "R" then scene.selected_point = -1;
+				if it.key_code == .SPACEBAR then scene.run = true;
 			}
 		}
+		if scene.mesh.nvert > 0 then scene.selected_point %= scene.mesh.nvert;
+		else                         scene.selected_point = -1;
+		scene.selected_point = max(scene.selected_point, -1);
 
 		update(*scene, dt);
 		render(*scene);
@@ -97,19 +115,47 @@ main :: () {
 }
 
 update :: (scene: *Scene_State, dt: float) {
-	theta := atan2(scene.camera_pos.y, scene.camera_pos.x);
+
+	for * scene.mesh.vertex_visible { <<it = false; }
+	scene.camera_target = .{ 0, 0, 0 };
+	if scene.selected_point > 0 {
+		scene.mesh.vertex_visible[scene.selected_point] = true;
+		scene.camera_target = scene.mesh.vertices[scene.selected_point];
+	}
+	scene.camera_pos.z = scene.camera_target.z + 1;
+
+	delta := scene.camera_pos - scene.camera_target;
+	theta := atan2(delta.y, delta.x);
 	l : float = 0;
-	l += scene.camera_pos.x * scene.camera_pos.x;
-	l += scene.camera_pos.y * scene.camera_pos.y;
+	l += delta.x * delta.x;
+	l += delta.y * delta.y;
 	l = sqrt(l);
 
 	if scene.q_down theta += scene.camera_speed * dt;
 	if scene.d_down theta -= scene.camera_speed * dt;
 	if scene.z_down l += 20 * scene.camera_speed * dt;
 	if scene.s_down l -= 20 * scene.camera_speed * dt;
+	
+	scene.camera_pos.x = scene.camera_target.x + cos(theta) * l;
+	scene.camera_pos.y = scene.camera_target.y + sin(theta) * l;
 
-	scene.camera_pos.x = cos(theta) * l;
-	scene.camera_pos.y = sin(theta) * l;
+	if scene.run && scene.selected_point < 0 {
+		println("Error select a point");
+	}
+	if scene.run && scene.selected_point > 0 {
+		vec := build_vector_list(scene.mesh, xx scene.selected_point);
+		closure_edge := MKL.mul(scene.mesh.A0, vec);
+		closure_face := MKL.mul(scene.mesh.A1, closure_edge);
+
+		for closure_edge if it > 0 {
+			scene.mesh.edge_visible[it_index] = true;
+		}
+		for closure_face if it > 0 {
+			scene.mesh.face_colors[it_index] = .{1, 1, 1};
+		}
+	}
+
+	update_gpu_data(*scene.mesh);
 }
 
 render :: (scene: *Scene_State) {
@@ -117,7 +163,7 @@ render :: (scene: *Scene_State) {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	glEnable(GL_DEPTH_TEST);
-	view := look_at_matrix(scene.camera_pos, .{0, 0, 0});
+	view := look_at_matrix(scene.camera_pos, scene.camera_target);
 	projection := perspective(1.0, cast(float) window_state.height / window_state.width, 500, 0.01);
 	set_uniform(scene.shader, "view", view);
 	set_uniform(scene.shader, "projection", projection);
@@ -146,14 +192,7 @@ look_at_matrix :: (viewpoint: Vector3, look_at: Vector3) -> Matrix4 {
 
 	z := -1 * dir;
 
-	rotation := make_matrix_from_rows(x, y, z);
-
-	// translation := Matrix4_Identity;
-	// rotation._14 = -viewpoint.x;
-	// rotation._24 = -viewpoint.y;
-	// rotation._34 = -viewpoint.z;
-	// result := rotation * translation;
-	result := translate(rotation, -viewpoint);
+	result := translate(make_matrix_from_rows(x, y, z), -viewpoint);
 
 	return result;
 }

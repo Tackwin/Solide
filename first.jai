@@ -4,7 +4,7 @@
 #run build();
 
 build :: () {
-	set_build_options_dc(.{ do_output = true });
+	set_build_options_dc(.{ do_output = false });
 
 	opts := get_build_options();
 	opts.output_type = .EXECUTABLE;
@@ -14,6 +14,7 @@ build :: () {
 	array_add(*import, ..opts.import_path);
 	array_add(*import, "./");
 	opts.import_path = import;
+	opts.entry_point_name = "main";
 
 	w := compiler_create_workspace("Solide");
 	set_build_options(opts, w);

@@ -3,3 +3,4 @@
 *.exe
 *.pdb
 *.code-workspace
+mkl_include/

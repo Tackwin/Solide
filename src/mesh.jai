@@ -38,6 +38,15 @@ Mesh :: struct {
 	edge_colors   : [..] Vector3;
 	face_colors   : [..] Vector3;
 
+	vertex_visible : [..] bool;
+	edge_visible   : [..] bool;
+	face_visible   : [..] bool;
+
+	pair_vertex_edge_map : Table(u64, u32);
+
+	A0 : MKL.Sparse_Matrix;
+	A1 : MKL.Sparse_Matrix;
+
 	Vertex :: struct {
 		pos   : Vector3;
 		color : Vector3;
@@ -74,16 +83,16 @@ load_mesh :: (file: string) -> Mesh {
 		else if scan2(line, "f %/% %/% %/%", *ft.x, *ft.y, *ft.z) array_add(*mesh.faces, f);
 	}
 	
-	edge_map : Table(u64, bool);
-	init(*edge_map, mesh.nvert);
-	
-	defer uninit(*edge_map);
+	init(*mesh.pair_vertex_edge_map, mesh.nvert);
 
 	array_reserve(*mesh.vertices, mesh.nvert);
 	array_reserve(*mesh.faces, mesh.nface);
 
 	array_reserve(*mesh.face_colors, mesh.nface);
 	array_reserve(*mesh.vertex_colors, mesh.nvert);
+
+	array_reserve(*mesh.vertex_visible, mesh.nvert);
+	array_reserve(*mesh.face_visible, mesh.nface);
 
 	rest = data;
 	while true {
@@ -108,35 +117,54 @@ load_mesh :: (file: string) -> Mesh {
 	}
 
 	for mesh.faces {
-		table_add(*edge_map, (cast(u64) min(it.x, it.y)) * 0xffff_ffff + max(it.x, it.y), true);
-		table_add(*edge_map, (cast(u64) min(it.y, it.z)) * 0xffff_ffff + max(it.y, it.z), true);
-		table_add(*edge_map, (cast(u64) min(it.z, it.x)) * 0xffff_ffff + max(it.z, it.x), true);
+		table_set(
+			*mesh.pair_vertex_edge_map,
+			(cast(u64) min(it.x, it.y)) * 0xffff_ffff + max(it.x, it.y),
+			0
+		);
+		table_set(
+			*mesh.pair_vertex_edge_map,
+			(cast(u64) min(it.y, it.z)) * 0xffff_ffff + max(it.y, it.z),
+			0
+		);
+		table_set(
+			*mesh.pair_vertex_edge_map,
+			(cast(u64) min(it.z, it.x)) * 0xffff_ffff + max(it.z, it.x),
+			0
+		);
 	}
-	mesh.nedge = edge_map.count;
 
+	mesh.nedge = mesh.pair_vertex_edge_map.count;
 	array_reserve(*mesh.edges, mesh.nedge);
 	array_reserve(*mesh.edge_colors, mesh.nedge);
-	for edge_map
+	array_reserve(*mesh.edge_visible, mesh.nedge);
+	for * mesh.pair_vertex_edge_map {
+		<<it = xx mesh.edges.count;
 		array_add(
-			*mesh.edges, make_vector2u32(xx (it_index / 0xffff_ffff), xx (it_index % 0xffff_ffff)));
+			*mesh.edges, make_vector2u32(xx (it_index / 0xffff_ffff), xx (it_index % 0xffff_ffff))
+		);
+	}
 
 	for mesh.faces {
 		c := make_vector3(
 			random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()
 		);
 		array_add(*mesh.face_colors, c);
+		array_add(*mesh.face_visible, true);
 	}
 	for mesh.vertices {
 		c := make_vector3(
 			random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()
 		);
 		array_add(*mesh.vertex_colors, c);
+		array_add(*mesh.vertex_visible, false);
 	}
 	for mesh.edges {
 		c := make_vector3(
 			random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()
 		);
 		array_add(*mesh.edge_colors, c);
+		array_add(*mesh.edge_visible, false);
 	}
 
 	// OEPNGL
@@ -154,6 +182,22 @@ load_mesh :: (file: string) -> Mesh {
 
 	return mesh;
 }
+
+free_mesh :: (mesh : Mesh) {
+	array_free(mesh.vertices);
+	array_free(mesh.faces);
+	array_free(mesh.edges);
+	array_free(mesh.face_colors);
+	array_free(mesh.edge_colors);
+	array_free(mesh.vertex_colors);
+	array_free(mesh.face_visible);
+	array_free(mesh.edge_visible);
+	array_free(mesh.vertex_visible);
+	uninit(*mesh.pair_vertex_edge_map);
+
+	array_free(mesh.cpu_buffer);
+}
+
 update_gpu_data :: (mesh: *Mesh) {
 	mesh.cpu_buffer.count = 0;
 	make_vertex :: (p : Vector3, c : Vector3) -> Mesh.Vertex {
@@ -166,14 +210,14 @@ update_gpu_data :: (mesh: *Mesh) {
 		array_add(buffer, make_vertex(p, c));
 	}
 
-	for mesh.faces {
+	for mesh.faces if mesh.face_visible[it_index] {
 		push_vertex(mesh.vertices[it.x], mesh.face_colors[it_index], *mesh.cpu_buffer);
 		push_vertex(mesh.vertices[it.y], mesh.face_colors[it_index], *mesh.cpu_buffer);
 		push_vertex(mesh.vertices[it.z], mesh.face_colors[it_index], *mesh.cpu_buffer);
 	}
 
 	push_point :: (p : Vector3, c : Vector3, buffer : *[..] Mesh.Vertex) {
-		R       : float : 0.1;
+		R       : float : 0.2;
 		PI      : float : 3.1415926;
 		H_ANGLE : float : PI / 180 * 72;
 		V_ANGLE : float : #run atan(0.5);
@@ -229,7 +273,7 @@ update_gpu_data :: (mesh: *Mesh) {
 			array_add(buffer, vertices[6 + (it + 0) % 5]);
 		}
 	}
-	for mesh.vertices {
+	for mesh.vertices if mesh.vertex_visible[it_index] {
 		push_point(it, mesh.vertex_colors[it_index], *mesh.cpu_buffer);
 	}
 
@@ -284,7 +328,7 @@ update_gpu_data :: (mesh: *Mesh) {
 		}
 	}
 
-	for mesh.edges {
+	for mesh.edges if mesh.edge_visible[it_index] {
 		b := *mesh.cpu_buffer;
 		push_edge(mesh.vertices[it.a], mesh.vertices[it.b], mesh.edge_colors[it_index], b);
 	}
@@ -309,13 +353,63 @@ update_gpu_data :: (mesh: *Mesh) {
 
 }
 
-free_mesh :: (mesh : Mesh) {
-	array_free(mesh.vertices);
-	array_free(mesh.faces);
-	array_free(mesh.edges);
-	array_free(mesh.face_colors);
-	array_free(mesh.edge_colors);
-	array_free(mesh.vertex_colors);
+get_edge_index :: (mesh: Mesh, vertex_a: u32, vertex_b: u32) -> u32 {
+	a := min(vertex_a, vertex_b);
+	b := max(vertex_a, vertex_b);
+	it, found := table_find(mesh.pair_vertex_edge_map, (cast(u64) a) * 0xffff_ffff + b);
+	assert(found);
+	return it;
+}
 
-	array_free(mesh.cpu_buffer);
+build_vertex_edge_adjacency_matrix :: (mesh: Mesh) -> MKL.Sparse_Matrix {
+	values : [..] float;
+	col_idx : [..] s64;
+	rows_start : [..] s64;
+	array_resize(*values    , mesh.nedge * 2);
+	array_resize(*col_idx   , mesh.nedge * 2);
+	array_resize(*rows_start, mesh.nedge + 1);
+	
+	for * rows_start { <<it = (it_index + 0) * 2; };
+	for * values     { <<it = 1; };
+	for mesh.edges {
+		col_idx[it_index * 2 + 0] = min(it.a, it.b);
+		col_idx[it_index * 2 + 1] = max(it.a, it.b);
+	}
+
+	return MKL.create_sparse_matrix(mesh.nedge, mesh.nvert, rows_start, col_idx, values);
+}
+
+build_edge_face_adjacency_matrix :: (mesh: Mesh) -> MKL.Sparse_Matrix {
+	values : [..] float;
+	col_idx : [..] s64;
+	rows_end : [..] s64;
+	rows_start : [..] s64;
+	array_resize(*values    , mesh.nface * 3);
+	array_resize(*col_idx   , mesh.nface * 3);
+	array_resize(*rows_start, mesh.nface + 1);
+
+	for * rows_start { <<it = (it_index + 0) * 3; };
+	for * values     { <<it = 1; }
+
+	for mesh.faces {
+		i := it_index;
+		col_idx[i * 3 + 0] = get_edge_index(mesh, it.x, it.y);
+		col_idx[i * 3 + 1] = get_edge_index(mesh, it.y, it.z);
+		col_idx[i * 3 + 2] = get_edge_index(mesh, it.z, it.x);
+
+		// Sort three values
+		if col_idx[i * 3 + 0] > col_idx[i * 3 + 1] Swap(*col_idx[i * 3 + 0], *col_idx[i * 3 + 1]);
+		if col_idx[i * 3 + 0] > col_idx[i * 3 + 2] Swap(*col_idx[i * 3 + 0], *col_idx[i * 3 + 2]);
+		if col_idx[i * 3 + 1] > col_idx[i * 3 + 2] Swap(*col_idx[i * 3 + 1], *col_idx[i * 3 + 2]);
+	}
+
+	return MKL.create_sparse_matrix(mesh.nface, mesh.nedge, rows_start, col_idx, values);
+}
+
+build_vector_list :: (mesh: Mesh, vertices: ..u32) -> [..] float {
+	v: [..] float;
+	array_resize(*v, mesh.nvert);
+
+	for vertices v[it] = 1;
+	return v;
 }
