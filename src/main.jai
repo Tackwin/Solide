@@ -51,6 +51,7 @@ Ui_State :: struct {
 	run_star := false;
 	run_closure := false;
 	run_link := false;
+	run_boundary := false;
 };
 
 window_state : Window_State;
@@ -193,6 +194,17 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		for link.edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
 	}
 
+	if ui.run_boundary && scene.selected_point >= 0 {
+		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
+		defer free(S);
+
+		boundary := Geometry.boundary(S, scene.mesh);
+		defer free(boundary);
+
+		for boundary.vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
+		for boundary.edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
+	}
+
 	if ui.reset_visible {
 		for * scene.mesh.vertex_visible { <<it = false; }
 		for * scene.mesh.edge_visible { <<it = false; }
@@ -263,6 +275,9 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 	r.y += k + pad;
 
 	ui.run_link = GetRect.button(r, "Run link", *theme.button_theme);
+	r.y += k + pad;
+
+	ui.run_boundary = GetRect.button(r, "Run boundary", *theme.button_theme);
 	r.y += k + pad;
 
 	GetRect.draw_popups();

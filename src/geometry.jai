@@ -3,6 +3,7 @@
 #import "src/mesh";
 MKL :: #import "src/mkl";
 
+#import "src/std";
 #scope_export
 
 
@@ -62,4 +63,46 @@ link :: (S: Simplicial_Complex, mesh: Mesh) -> Simplicial_Complex {
 	for star_.edges if it > 0 link.edges[it_index] = 0;
 
 	return link;
+}
+
+is_complex :: (S: Simplicial_Complex, mesh: Mesh) -> bool {
+	// If any of the connected vertex from S.edges are not in S.vertex then S is not simplicial.
+	subset_vertex := MKL.mul(S.edges, mesh.A0);
+	defer array_free(subset_vertex);
+	for subset_vertex if it > 0 && S.vertices[it_index] == 0 return false;
+	
+	// Samesies for faces and edges
+	subset_edge := MKL.mul(S.faces, mesh.A1);
+	defer array_free(subset_edge);
+	for subset_edge if it > 0 && S.edges[it_index] == 0 return false;
+	
+	return true;
+}
+
+is_pure_complex :: (S: Simplicial_Complex, mesh: Mesh) -> int {
+	edge_from_face := MKL.mul(S.faces, mesh.A1);
+	defer array_free(edge_from_face);
+	for edge_from_face if it != S.edges[it_index] return -1;
+
+	vertex_from_edge := MKL.mul(S.edges, mesh.A0);
+	defer array_free(vertex_from_edge);
+	for vertex_from_edge if it != S.vertices[it_index] return -1;
+
+	if S.faces.count > 0 return 2;
+	if S.edges.count > 0 return 1;
+	return 0;
+}
+
+boundary :: (S: Simplicial_Complex, mesh: Mesh) -> Simplicial_Complex {
+	assert(is_pure_complex(S, mesh) >= 0);
+	boundary : Simplicial_Complex;
+	
+	array_resize(*boundary.faces, mesh.nface);
+	for * boundary.faces { <<it = 0; };
+	boundary.edges = MKL.mul(S.faces, mesh.A1);
+	for * boundary.edges if <<it != 1 then <<it = 0;
+	boundary.vertices = MKL.mul(S.faces, mesh.A0);
+	for * boundary.vertices if <<it > 0 then <<it = 1;
+
+	return boundary;
 }
