@@ -162,40 +162,35 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	}
 
 	if ui.run_star && scene.selected_point >= 0 {
-		vec := build_vector_list(scene.mesh, xx scene.selected_point);
-		star_edge, star_face := vertex_star(vec, scene.mesh);
+		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
+		defer free(S);
+		star := Geometry.star(S, scene.mesh);
+		defer free(star);
 
-		defer {
-			array_free(vec);
-			array_free(star_edge);
-			array_free(star_face);
-		}
-
-		for star_edge if it > 0 scene.mesh.edge_visible[it_index] = true;
-		for star_face if it > 0 scene.mesh.face_colors[it_index]  = .{1, 1, 1};
+		for star.edges if it > 0 scene.mesh.edge_visible[it_index] = true;
+		for star.faces if it > 0 scene.mesh.face_colors[it_index]  = .{1, 1, 1};
 	}
 	if ui.run_closure && scene.selected_point >= 0 {
-		vec := build_vector_list(scene.mesh, xx scene.selected_point);
-		vertices, edges, faces := vertex_closure(vec, scene.mesh);
-		defer {
-			array_free(vertices);
-			array_free(edges);
-			array_free(faces);
-		}
+		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
+		defer free(S);
 
-		for vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
-		for edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
-		for faces    if it > 0 scene.mesh.face_colors[it_index]    = .{1, 1, 1};
+		closure := Geometry.closure(S, scene.mesh);
+		defer free(closure);
+
+		for closure.vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
+		for closure.edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
+		for closure.faces    if it > 0 scene.mesh.face_colors[it_index]    = .{1, 1, 1};
 	}
 
 	if ui.run_link && scene.selected_point >= 0 {
-		vec := build_vector_list(scene.mesh, xx scene.selected_point);
-		vertices, edges := vertex_link(vec, scene.mesh);
-		defer array_free(vertices);
-		defer array_free(edges);
+		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
+		defer free(S);
 
-		for vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
-		for edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
+		link := Geometry.link(S, scene.mesh);
+		defer free(link);
+
+		for link.vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
+		for link.edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
 	}
 
 	if ui.reset_visible {
@@ -303,3 +298,18 @@ perspective :: (fov: float, ratio: float, f: float, n: float) -> Matrix4 {
 	matrix._43 = -1;
 	return  matrix;
 }
+
+simplicial_from_vertex ::(mesh: Mesh, i: u32) -> Simplicial_Complex {
+	v := build_vector_list(mesh, i);
+	e : [..] float;
+	f : [..] float;
+
+	array_resize(*e, mesh.nedge);
+	array_resize(*f, mesh.nedge);
+
+	for * e { <<it = 0; }
+	for * f { <<it = 0; }
+
+	return make_simplicial(v, e, f);
+}
+

@@ -5,44 +5,61 @@ MKL :: #import "src/mkl";
 
 #scope_export
 
-vertex_star :: (vertex: [] float, mesh: Mesh) -> (edges: [] float, faces: [] float) {
-	edges := MKL.mul(mesh.A0, vertex);
-	faces := MKL.mul(mesh.A1, edges);
-	return (edges, faces);
+
+Simplicial_Complex :: struct {
+	vertices : [] float;
+	edges    : [] float;
+	faces    : [] float;
+};
+
+make_simplicial :: (v: [] float, e: [] float, f: [] float) -> Simplicial_Complex {
+	S: Simplicial_Complex = ---;
+	S.vertices = v;
+	S.edges = e;
+	S.faces = f;
+	return S;
 }
 
-vertex_closure :: (vertex: [] float, mesh: Mesh) -> (
-	vertices: [] float, edges: [] float, faces: [] float
-)
-{
-	star_edge, star_faces := vertex_star(vertex, mesh);
-	defer {
-		array_free(star_edge);
-	}
+free :: (S: Simplicial_Complex) {
+	array_free(S.vertices);
+	array_free(S.edges);
+	array_free(S.faces);
+}
 
-	edges := MKL.mul(star_faces, mesh.A1);
-	vertices := MKL.mul(edges, mesh.A0);
+star :: (S: Simplicial_Complex, mesh: Mesh) -> Simplicial_Complex {
+	star : Simplicial_Complex;
+	star.vertices = array_copy(S.vertices);
+	star.edges    = MKL.mul(mesh.A0, star.vertices);
+	for S.edges if it > 0 star.edges[it_index] = 1;
+	star.faces    = MKL.mul(mesh.A1, star.edges);
+	for S.faces if it > 0 star.faces[it_index] = 1;
+	return star;
+}
+
+closure :: (S: Simplicial_Complex, mesh: Mesh) -> Simplicial_Complex {
+	closure : Simplicial_Complex;
+	closure.faces    = array_copy(S.faces);
+	closure.edges    = MKL.mul(closure.faces, mesh.A1);
+	for S.edges    if it > 0 closure.edges[it_index] = 1;
+	closure.vertices = MKL.mul(closure.edges, mesh.A0);
+	for S.vertices if it > 0 closure.vertices[it_index] = 1;
 	
-	return (vertices, edges, star_faces);
+	return closure;
 }
 
-vertex_link :: (vertex: [] float, mesh: Mesh) -> (vertices: [] float, edges: [] float) {
-	star_edges, star_faces := vertex_star(vertex, mesh);
-	closure_vertices, closure_edges, closure_faces := vertex_closure(vertex, mesh);
+link :: (S: Simplicial_Complex, mesh: Mesh) -> Simplicial_Complex {
+	star_ := star(S, mesh);
+	defer free(star_);
 
-	defer {
-		array_free(star_edges);
-		array_free(star_faces);
-		array_free(closure_vertices);
-		array_free(closure_edges);
-		array_free(closure_faces);
-	};
+	closure_ := closure(star_, mesh);
+	defer free(closure_);
 
-	vertices := array_copy(closure_vertices);
-	edges := array_copy(closure_edges);
+	link : Simplicial_Complex;
+	link.vertices = array_copy(closure_.vertices);
+	link.edges    = array_copy(closure_.edges);
 
-	for vertex if it > 0 vertices[it_index] = 0;
-	for star_edges if it > 0 edges[it_index] = 0;
+	for S.vertices  if it > 0 link.vertices[it_index] = 0;
+	for star_.edges if it > 0 link.edges[it_index] = 0;
 
-	return vertices, edges;
+	return link;
 }
