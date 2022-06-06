@@ -50,6 +50,7 @@ Ui_State :: struct {
 	reset_visible := false;
 	run_star := false;
 	run_closure := false;
+	run_link := false;
 };
 
 window_state : Window_State;
@@ -161,7 +162,6 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	}
 
 	if ui.run_star && scene.selected_point >= 0 {
-		print("Star");
 		vec := build_vector_list(scene.mesh, xx scene.selected_point);
 		star_edge, star_face := vertex_star(vec, scene.mesh);
 
@@ -171,15 +171,10 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 			array_free(star_face);
 		}
 
-		for star_edge if it > 0 {
-			scene.mesh.edge_visible[it_index] = true;
-		}
-		for star_face if it > 0 {
-			scene.mesh.face_colors[it_index] = .{1, 1, 1};
-		}
+		for star_edge if it > 0 scene.mesh.edge_visible[it_index] = true;
+		for star_face if it > 0 scene.mesh.face_colors[it_index]  = .{1, 1, 1};
 	}
 	if ui.run_closure && scene.selected_point >= 0 {
-		print("Closure");
 		vec := build_vector_list(scene.mesh, xx scene.selected_point);
 		vertices, edges, faces := vertex_closure(vec, scene.mesh);
 		defer {
@@ -188,19 +183,22 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 			array_free(faces);
 		}
 
-		for vertices if it > 0 {
-			scene.mesh.vertex_visible[it_index] = true;
-		}
-		for edges if it > 0 {
-			scene.mesh.edge_visible[it_index] = true;
-		}
-		for faces if it > 0 {
-			scene.mesh.face_colors[it_index] = .{1, 1, 1};
-		}
+		for vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
+		for edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
+		for faces    if it > 0 scene.mesh.face_colors[it_index]    = .{1, 1, 1};
+	}
+
+	if ui.run_link && scene.selected_point >= 0 {
+		vec := build_vector_list(scene.mesh, xx scene.selected_point);
+		vertices, edges := vertex_link(vec, scene.mesh);
+		defer array_free(vertices);
+		defer array_free(edges);
+
+		for vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
+		for edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
 	}
 
 	if ui.reset_visible {
-		print("Reset");
 		for * scene.mesh.vertex_visible { <<it = false; }
 		for * scene.mesh.edge_visible { <<it = false; }
 		for * scene.mesh.face_colors {
@@ -267,6 +265,9 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 	r.y += k + pad;
 
 	ui.run_closure = GetRect.button(r, "Run closure", *theme.button_theme);
+	r.y += k + pad;
+
+	ui.run_link = GetRect.button(r, "Run link", *theme.button_theme);
 	r.y += k + pad;
 
 	GetRect.draw_popups();
