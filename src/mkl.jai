@@ -1,5 +1,6 @@
 #scope_file
 #load "mkl_api.jai";
+#import "src/std";
 
 #scope_export
 #import "Basic";
@@ -45,14 +46,11 @@ create_sparse_matrix :: (
 
 operator * :: (a: Sparse_Matrix, b: Sparse_Matrix) -> Sparse_Matrix {
 	c: Sparse_Matrix;
-	print("% %\n", a.rows, a.cols);
-	print("% %\n", b.rows, b.cols);
 
 	desc : matrix_descr;
 	desc.type = .GENERAL;
 
 	status := mkl_sparse_sp2m(.TRANSPOSE, desc, a.mat, .TRANSPOSE, desc, b.mat, .FULL_MULT, *c.mat);
-	print("%\n", status);
 	return c;
 }
 
@@ -68,6 +66,19 @@ mul :: (A: Sparse_Matrix, x: [] float) -> [..] float {
 	array_resize(*y, A.rows);
 
 	status := mkl_sparse_s_mv(.NON_TRANSPOSE, 1, A.mat, desc, x.data, 0, y.data);
+	assert(status == .SUCCESS);
+	return y;
+}
+
+mul :: (x: [] float, A: Sparse_Matrix) -> [..] float {
+	desc : matrix_descr;
+	desc.type = .GENERAL;
+
+	y : [..] float;
+	array_resize(*y, A.cols);
+
+	status := mkl_sparse_s_mv(.TRANSPOSE, 1, A.mat, desc, x.data, 0, y.data);
+	assert(status == .SUCCESS);
 	return y;
 }
 

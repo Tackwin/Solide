@@ -1,9 +1,14 @@
+#scope_file
+#import "Basic";
 #import "String";
 #import "File";
+#import "GL";
 #import "Math";
 #import "Random";
 #import "Hash_Table";
+MKL :: #import "src/mkl";
 
+#scope_export
 Vector2u32 :: struct {
 	a : u32 = 0;
 	b : u32 = 0;

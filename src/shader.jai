@@ -1,3 +1,11 @@
+#scope_file
+#import "Basic";
+#import "GL";
+#import "Math";
+#import "src/std";
+
+#scope_export
+
 FRAG :: #string FRAG
 #version 410 core
 layout (location = 0) in vec3 color;
@@ -93,6 +101,7 @@ shader_init :: () -> Shader {
 }
 
 set_uniform :: (using shader: Shader, name: string, mat: Matrix4) {
+	glUseProgram(program);
 	loc := glGetUniformLocation(program, name.data);
 	glUniformMatrix4fv(loc, 1, false, cast(*float) *mat);
 }
