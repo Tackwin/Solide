@@ -177,7 +177,7 @@ load_mesh :: (file: string) -> Mesh {
 	glGenBuffers(1, *mesh.vbo);
 	glGenBuffers(1, *mesh.ebo);
 
-	update_gpu_data(*mesh, .{}, .{});
+	update_gpu_data(*mesh, false);
 
 	glBindVertexArray(mesh.vao);
 	glEnableVertexAttribArray(0);
@@ -203,7 +203,7 @@ free_mesh :: (mesh : Mesh) {
 	array_free(mesh.cpu_buffer);
 }
 
-update_gpu_data :: (mesh: *Mesh, aa: Vector3, bb: Vector3) {
+update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
 	mesh.cpu_buffer.count = 0;
 	make_vertex :: (p : Vector3, c : Vector3) -> Mesh.Vertex {
 		v : Mesh.Vertex = ---;
@@ -216,9 +216,15 @@ update_gpu_data :: (mesh: *Mesh, aa: Vector3, bb: Vector3) {
 	}
 
 	for mesh.faces if mesh.face_visible[it_index] {
-		push_vertex(mesh.vertices[it.x], mesh.face_colors[it_index], *mesh.cpu_buffer);
-		push_vertex(mesh.vertices[it.y], mesh.face_colors[it_index], *mesh.cpu_buffer);
-		push_vertex(mesh.vertices[it.z], mesh.face_colors[it_index], *mesh.cpu_buffer);
+		if interpolate_vertex_color {
+			push_vertex(mesh.vertices[it.x], mesh.vertex_colors[it.x], *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.y], mesh.vertex_colors[it.y], *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.z], mesh.vertex_colors[it.z], *mesh.cpu_buffer);
+		} else {
+			push_vertex(mesh.vertices[it.x], mesh.face_colors[it_index], *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.y], mesh.face_colors[it_index], *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.z], mesh.face_colors[it_index], *mesh.cpu_buffer);
+		}
 	}
 
 	push_point :: (p : Vector3, c : Vector3, buffer : *[..] Mesh.Vertex) {
@@ -333,7 +339,6 @@ update_gpu_data :: (mesh: *Mesh, aa: Vector3, bb: Vector3) {
 		}
 	}
 
-	push_edge(aa, bb, .{1, 1, 1}, *mesh.cpu_buffer);
 	for mesh.edges if mesh.edge_visible[it_index] {
 		b := *mesh.cpu_buffer;
 		push_edge(mesh.vertices[it.a], mesh.vertices[it.b], mesh.edge_colors[it_index], b);

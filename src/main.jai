@@ -15,6 +15,7 @@ Input :: #import "Input";
 MKL :: #import "src/mkl";
 Geometry :: #import "src/geometry";
 Collision :: #import "src/collision";
+DEC :: #import "src/dec";
 #scope_export
 
 Window_State :: struct {
@@ -28,6 +29,17 @@ Simp_State :: struct {
 	width : s64;
 	height : s64;
 };
+
+Camera :: struct {
+	fov := 60.0;
+	far := 500.0;
+	near := 0.01;
+
+	speed := 1.5;
+
+	pos : Vector3;
+	target : Vector3;
+}
 
 Scene_State :: struct {
 	mouse_left_pressed := false;
@@ -52,9 +64,7 @@ Scene_State :: struct {
 
 	run := false;
 
-	camera_speed := 1.5;
-	camera_pos : Vector3;
-	camera_target : Vector3;
+	camera: Camera;
 };
 
 Ui_State :: struct {
@@ -89,7 +99,7 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("spot.obj");
+	scene.mesh   = load_mesh("model.obj");
 
 	// init Simplicial.
 	array_resize(*scene.selected_simplicial.vertices, scene.mesh.vertices.count);
@@ -99,8 +109,8 @@ main :: () {
 	for * scene.selected_simplicial.edges { <<it = 0; }
 	for * scene.selected_simplicial.faces { <<it = 0; }
 
-	scene.camera_pos    = .{ 1, 0, 0 };
-	scene.camera_target = .{ 0, 0, 0 };
+	scene.camera.pos    = .{ 1, 0, 1 };
+	scene.camera.target = .{ 0, 0, 0 };
 
 	scene.mesh.A0 = build_vertex_edge_adjacency_matrix(scene.mesh);
 	scene.mesh.A1 = build_edge_face_adjacency_matrix(scene.mesh);
@@ -171,27 +181,27 @@ main :: () {
 
 update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 
-	scene.camera_target = .{ 0, 0, 0 };
+	scene.camera.target = .{ 0, 0, 0 };
 	
 	if scene.selected_point >= 0 {
-		scene.camera_target = scene.mesh.vertices[scene.selected_point];
+		scene.camera.target = scene.mesh.vertices[scene.selected_point];
 	}
-	scene.camera_pos.z = scene.camera_target.z;
 
-	delta := scene.camera_pos - scene.camera_target;
+	delta := scene.camera.pos - scene.camera.target;
 	theta := atan2(delta.y, delta.x);
 	l : float = 0;
 	l += delta.x * delta.x;
 	l += delta.y * delta.y;
 	l = sqrt(l);
 
-	if scene.q_down theta += scene.camera_speed * dt;
-	if scene.d_down theta -= scene.camera_speed * dt;
-	if scene.z_down l += scene.camera_speed * dt;
-	if scene.s_down l -= scene.camera_speed * dt;
+	scene.camera.pos.z = scene.camera.target.z + l / 2;
+	if scene.q_down theta += scene.camera.speed * dt;
+	if scene.d_down theta -= scene.camera.speed * dt;
+	if scene.z_down l += scene.camera.speed * dt;
+	if scene.s_down l -= scene.camera.speed * dt;
 	
-	scene.camera_pos.x = scene.camera_target.x + cos(theta) * l;
-	scene.camera_pos.y = scene.camera_target.y + sin(theta) * l;
+	scene.camera.pos.x = scene.camera.target.x + cos(theta) * l;
+	scene.camera.pos.y = scene.camera.target.y + sin(theta) * l;
 
 	if ui.reset_visible Geometry.clear(scene.selected_simplicial);
 	if ui.add_point && scene.selected_point >= 0 {
@@ -244,7 +254,7 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		old := false;
 		if scene.selected_point >= 0 old = scene.mesh.vertex_visible[scene.selected_point];
 		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = true;
-		update_gpu_data(*scene.mesh, .{}, .{});
+		update_gpu_data(*scene.mesh, false);
 		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = old;
 	}
 }
@@ -255,8 +265,8 @@ update_ray_picking :: (scene: *Scene_State, ui: *Ui_State) {
 	cap : Collision.Capsule = ---;
 	sph : Collision.Sphere = ---;
 
-	cap.r = 0.02;
-	sph.r = 0.025;
+	cap.r = 0.01;
+	sph.r = 0.015;
 
 	t_tri : float = FLOAT32_MAX;
 	t_cap : float = FLOAT32_MAX;
@@ -316,10 +326,9 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 
 	// glDepthMask(GL_TRUE);
 	glEnable(GL_DEPTH_TEST);
-	view := look_at_matrix(scene.camera_pos, scene.camera_target);
-	projection := perspective(1.0, cast(float) window_state.height / window_state.width, 500, 0.01);
+	view := look_at_matrix(scene.camera.pos, scene.camera.target);
 	set_uniform(scene.shader, "view", view);
-	set_uniform(scene.shader, "projection", projection);
+	set_uniform(scene.shader, "projection", projection(scene.camera));
 
 	render(scene.mesh, scene.shader);
 	render_ui(scene, ui);
@@ -432,20 +441,32 @@ get_color :: (i: int) -> Vector3 {
 	);
 }
 
+projection :: (c: Camera) -> Matrix4 {
+	return perspective(
+		c.fov / 180 * 3.1415926, cast(float) window_state.height / window_state.width, c.far, c.near
+	);
+}
+
 ray_from_camera :: (window: Window_State, scene: Scene_State) -> Collision.Ray {
 	mouse_x, mouse_y, success := get_mouse_pointer_position(window.handle, true);
 
-	ndc := make_vector2(2.0 * mouse_x / window.width - 1, 2.0 * mouse_y / window.height - 1);
+	ndc := make_vector2(
+		2.0 * mouse_x / (window.width - 0) - 1,
+		2.0 * mouse_y / (window.height - 0) - 1
+	);
 	hcc := make_vector4(ndc.x, ndc.y, 1, 1);
-	projection := perspective(1.0, cast(float) window.height / window.width, 500, 0.01);
-	projection_inv, invertible1 := inverse(projection);
+	projection_inv, invertible1 := inverse(projection(scene.camera));
 	if !invertible1 return .{};
 	ecc := projection_inv * hcc;
 
-	view := look_at_matrix(scene.camera_pos, scene.camera_target);
+	view := look_at_matrix(scene.camera.pos, scene.camera.target);
 	view_inv, invertible2 := inverse(view);
 	if !invertible2 return .{};
 	ray := normalize((view_inv * ecc).xyz);
 
-	return Collision.ray(scene.camera_pos, ray);
+	pos_offset := (view_inv * make_vector4(0, 0, 1, 0)).xyz;
+	pos := scene.camera.pos + pos_offset;
+
+	return Collision.ray(pos, ray);
 }
+
