@@ -85,7 +85,7 @@ load_mesh :: (file: string) -> Mesh {
 
 		     if scan2(line, "v % % %", *v.x, *v.y, *v.z) mesh.nvert += 1;
 		else if scan2(line, "f % % %", *f.x, *f.y, *f.z) mesh.nface += 1;
-		else if scan2(line, "f %/% %/% %/%", *ft.x, *ft.y, *ft.z) array_add(*mesh.faces, f);
+		else if scan2(line, "f %/% %/% %/%", *f.x, *ft.x, *f.y, *ft.y, *f.z, *ft.z) mesh.nface += 1;
 	}
 	
 	init(*mesh.pair_vertex_edge_map, mesh.nvert);
@@ -177,7 +177,7 @@ load_mesh :: (file: string) -> Mesh {
 	glGenBuffers(1, *mesh.vbo);
 	glGenBuffers(1, *mesh.ebo);
 
-	update_gpu_data(*mesh);
+	update_gpu_data(*mesh, .{}, .{});
 
 	glBindVertexArray(mesh.vao);
 	glEnableVertexAttribArray(0);
@@ -203,7 +203,7 @@ free_mesh :: (mesh : Mesh) {
 	array_free(mesh.cpu_buffer);
 }
 
-update_gpu_data :: (mesh: *Mesh) {
+update_gpu_data :: (mesh: *Mesh, aa: Vector3, bb: Vector3) {
 	mesh.cpu_buffer.count = 0;
 	make_vertex :: (p : Vector3, c : Vector3) -> Mesh.Vertex {
 		v : Mesh.Vertex = ---;
@@ -222,7 +222,7 @@ update_gpu_data :: (mesh: *Mesh) {
 	}
 
 	push_point :: (p : Vector3, c : Vector3, buffer : *[..] Mesh.Vertex) {
-		R       : float : 0.2;
+		R       : float : 0.02;
 		PI      : float : 3.1415926;
 		H_ANGLE : float : PI / 180 * 72;
 		V_ANGLE : float : #run atan(0.5);
@@ -283,7 +283,7 @@ update_gpu_data :: (mesh: *Mesh) {
 	}
 
 	push_edge:: (a : Vector3, b : Vector3, c : Vector3, buffer : *[..] Mesh.Vertex) {
-		R       : float : 0.05;
+		R       : float : 0.005;
 
 		x := (b - a) / 2;
 		z := Vector3.{0, 0, 1};
@@ -333,6 +333,7 @@ update_gpu_data :: (mesh: *Mesh) {
 		}
 	}
 
+	push_edge(aa, bb, .{1, 1, 1}, *mesh.cpu_buffer);
 	for mesh.edges if mesh.edge_visible[it_index] {
 		b := *mesh.cpu_buffer;
 		push_edge(mesh.vertices[it.a], mesh.vertices[it.b], mesh.edge_colors[it_index], b);

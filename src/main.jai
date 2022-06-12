@@ -14,6 +14,7 @@ Input :: #import "Input";
 #import "src/shader";
 MKL :: #import "src/mkl";
 Geometry :: #import "src/geometry";
+Collision :: #import "src/collision";
 #scope_export
 
 Window_State :: struct {
@@ -29,6 +30,11 @@ Simp_State :: struct {
 };
 
 Scene_State :: struct {
+	mouse_left_pressed := false;
+	mouse_right_pressed := false;
+	mouse_left_down := false;
+	mouse_right_down := false;
+	
 	z_down : bool = false;
 	s_down : bool = false;
 	d_down : bool = false;
@@ -37,7 +43,12 @@ Scene_State :: struct {
 	shader : Shader;
 	mesh   : Mesh;
 
+	selected_simplicial : Geometry.Simplicial_Complex;
+
 	selected_point : s64 = -1;
+	hover_vertex : s64 = -1;
+	hover_edge : s64 = -1;
+	hover_face : s64 = -1;
 
 	run := false;
 
@@ -47,7 +58,11 @@ Scene_State :: struct {
 };
 
 Ui_State :: struct {
+	eat_event := false;
+
 	reset_visible := false;
+
+	add_point := false;
 	run_star := false;
 	run_closure := false;
 	run_link := false;
@@ -74,8 +89,17 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("model.obj");
-	scene.camera_pos    = .{ 1, 0, 1 };
+	scene.mesh   = load_mesh("spot.obj");
+
+	// init Simplicial.
+	array_resize(*scene.selected_simplicial.vertices, scene.mesh.vertices.count);
+	array_resize(*scene.selected_simplicial.edges, scene.mesh.edges.count);
+	array_resize(*scene.selected_simplicial.faces, scene.mesh.faces.count);
+	for * scene.selected_simplicial.vertices { <<it = 0; }
+	for * scene.selected_simplicial.edges { <<it = 0; }
+	for * scene.selected_simplicial.faces { <<it = 0; }
+
+	scene.camera_pos    = .{ 1, 0, 0 };
 	scene.camera_target = .{ 0, 0, 0 };
 
 	scene.mesh.A0 = build_vertex_edge_adjacency_matrix(scene.mesh);
@@ -104,6 +128,8 @@ main :: () {
 
 		scene.run = false;
 
+		scene.mouse_left_pressed = false;
+		scene.mouse_right_pressed = false;
 		for Input.events_this_frame {
 			GetRect.getrect_handle_event(it);
 			if it.type == .QUIT then quit = true;
@@ -121,14 +147,23 @@ main :: () {
 				if it.key_pressed && it.key_code == #char "A" then scene.selected_point -= 1;
 				if it.key_pressed && it.key_code == #char "R" then scene.selected_point = -1;
 				if it.key_pressed && it.key_code == .SPACEBAR then scene.run = true;
+
+				mouse_left\_can_be_pressed := !scene.mouse_left\_down;
+				mouse_right_can_be_pressed := !scene.mouse_right_down;
+
+				if it.key_code == .MOUSE_BUTTON_RIGHT scene.mouse_right_down = it.key_pressed > 0;
+				if it.key_code == .MOUSE_BUTTON_LEFT  scene.mouse_left_down  = it.key_pressed > 0;
+
+				scene.mouse_left\_pressed = mouse_left\_can_be_pressed && scene.mouse_left\_down;
+				scene.mouse_right_pressed = mouse_right_can_be_pressed && scene.mouse_right_down;
 			}
 		}
 		if scene.mesh.nvert > 0 then scene.selected_point %= scene.mesh.nvert;
 		else                         scene.selected_point = -1;
 		scene.selected_point = max(scene.selected_point, -1);
 
-		update(*scene, *ui, dt);
 		render(*scene, *ui);
+		update(*scene, *ui, dt);
 
 		reset_temporary_storage();
 	}
@@ -141,7 +176,7 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	if scene.selected_point >= 0 {
 		scene.camera_target = scene.mesh.vertices[scene.selected_point];
 	}
-	scene.camera_pos.z = scene.camera_target.z + 1;
+	scene.camera_pos.z = scene.camera_target.z;
 
 	delta := scene.camera_pos - scene.camera_target;
 	theta := atan2(delta.y, delta.x);
@@ -152,76 +187,126 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 
 	if scene.q_down theta += scene.camera_speed * dt;
 	if scene.d_down theta -= scene.camera_speed * dt;
-	if scene.z_down l += 20 * scene.camera_speed * dt;
-	if scene.s_down l -= 20 * scene.camera_speed * dt;
+	if scene.z_down l += scene.camera_speed * dt;
+	if scene.s_down l -= scene.camera_speed * dt;
 	
 	scene.camera_pos.x = scene.camera_target.x + cos(theta) * l;
 	scene.camera_pos.y = scene.camera_target.y + sin(theta) * l;
 
-	if (ui.run_star || ui.run_closure) && scene.selected_point < 0 {
-		println("Error select a point");
+	if ui.reset_visible Geometry.clear(scene.selected_simplicial);
+	if ui.add_point && scene.selected_point >= 0 {
+		scene.selected_simplicial.vertices[scene.selected_point] = 1;
 	}
 
-	if ui.run_star && scene.selected_point >= 0 {
-		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
-		defer free(S);
-		star := Geometry.star(S, scene.mesh);
+	if ui.run_star {
+		star := Geometry.star(scene.selected_simplicial, scene.mesh);
 		defer free(star);
 
-		for star.edges if it > 0 scene.mesh.edge_visible[it_index] = true;
-		for star.faces if it > 0 scene.mesh.face_colors[it_index]  = .{1, 1, 1};
+		Geometry.swap(*star, *scene.selected_simplicial);
 	}
-	if ui.run_closure && scene.selected_point >= 0 {
-		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
-		defer free(S);
-
-		closure := Geometry.closure(S, scene.mesh);
+	if ui.run_closure {
+		closure := Geometry.closure(scene.selected_simplicial, scene.mesh);
 		defer free(closure);
 
-		for closure.vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
-		for closure.edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
-		for closure.faces    if it > 0 scene.mesh.face_colors[it_index]    = .{1, 1, 1};
+		Geometry.swap(*closure, *scene.selected_simplicial);
 	}
 
-	if ui.run_link && scene.selected_point >= 0 {
-		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
-		defer free(S);
-
-		link := Geometry.link(S, scene.mesh);
+	if ui.run_link {
+		link := Geometry.link(scene.selected_simplicial, scene.mesh);
 		defer free(link);
 
-		for link.vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
-		for link.edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
+		Geometry.swap(*link, *scene.selected_simplicial);
 	}
 
-	if ui.run_boundary && scene.selected_point >= 0 {
-		S := simplicial_from_vertex(scene.mesh, xx scene.selected_point);
-		defer free(S);
-
-		boundary := Geometry.boundary(S, scene.mesh);
+	if ui.run_boundary {
+		boundary := Geometry.boundary(scene.selected_simplicial, scene.mesh);
 		defer free(boundary);
 
-		for boundary.vertices if it > 0 scene.mesh.vertex_visible[it_index] = true;
-		for boundary.edges    if it > 0 scene.mesh.edge_visible[it_index]   = true;
+		Geometry.swap(*boundary, *scene.selected_simplicial);
 	}
 
-	if ui.reset_visible {
-		for * scene.mesh.vertex_visible { <<it = false; }
-		for * scene.mesh.edge_visible { <<it = false; }
-		for * scene.mesh.face_colors {
-			c := make_vector3(
-				random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()
-			);
-			<<it = c;
-		}
+	update_ray_picking(scene, ui);
+
+	for * scene.mesh.vertex_visible {
+		<<it = scene.selected_simplicial.vertices[it_index] > 0 || scene.hover_vertex == it_index;
+	}
+	for * scene.mesh.edge_visible   {
+		<<it = scene.selected_simplicial.edges[it_index] > 0    || scene.hover_edge == it_index;
+	}
+	for * scene.mesh.face_colors   {
+		c := get_color(it_index);
+		if scene.selected_simplicial.faces[it_index] > 0 || scene.hover_face == it_index
+			c = .{1, 1, 1};
+		<<it = c;
 	}
 
 	{
 		old := false;
 		if scene.selected_point >= 0 old = scene.mesh.vertex_visible[scene.selected_point];
 		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = true;
-		update_gpu_data(*scene.mesh);
+		update_gpu_data(*scene.mesh, .{}, .{});
 		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = old;
+	}
+}
+
+update_ray_picking :: (scene: *Scene_State, ui: *Ui_State) {
+	ray := ray_from_camera(window_state, scene);
+	tri : Collision.Triangle = ---;
+	cap : Collision.Capsule = ---;
+	sph : Collision.Sphere = ---;
+
+	cap.r = 0.02;
+	sph.r = 0.025;
+
+	t_tri : float = FLOAT32_MAX;
+	t_cap : float = FLOAT32_MAX;
+	t_sph : float = FLOAT32_MAX;
+
+	tri_idx := -1;
+	edg_idx := -1;
+	ver_idx := -1;
+
+	for scene.mesh.faces {
+		tri.a = scene.mesh.vertices[it.x];
+		tri.b = scene.mesh.vertices[it.y];
+		tri.c = scene.mesh.vertices[it.z];
+
+		t, hit := Collision.triangle_ray_t(tri, ray);
+		if hit && t_tri > t {
+			t_tri = t;
+			tri_idx = it_index;
+		}
+	}
+	for scene.mesh.edges {
+		cap.a = scene.mesh.vertices[it.a];
+		cap.b = scene.mesh.vertices[it.b];
+
+		t, hit := Collision.capsule_ray_t(cap, ray);
+		if hit && t_cap > t {
+			t_cap = t;
+			edg_idx = it_index;
+		}
+	}
+	for scene.mesh.vertices {
+		sph.p = it;
+
+		t, hit := Collision.sphere_ray_t(sph, ray);
+		if hit && t_sph > t {
+			t_sph = t;
+			ver_idx = it_index;
+		}
+	}
+
+	t_min := min(t_tri, min(t_cap, t_sph));
+
+	scene.hover_vertex = ifx ver_idx >= 0 && t_sph == t_min then ver_idx else -1;
+	scene.hover_edge   = ifx edg_idx >= 0 && t_cap == t_min then edg_idx else -1;
+	scene.hover_face   = ifx tri_idx >= 0 && t_tri == t_min then tri_idx else -1;
+
+	if scene.mouse_left_pressed && !ui.eat_event {
+		if scene.hover_vertex >= 0 scene.selected_simplicial.vertices[scene.hover_vertex] = 1;
+		if scene.hover_edge   >= 0 scene.selected_simplicial.edges[scene.hover_edge] = 1;
+		if scene.hover_face   >= 0 scene.selected_simplicial.faces[scene.hover_face] = 1;
 	}
 }
 
@@ -261,23 +346,34 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 	theme := GetRect.default_overall_theme;
 	font := theme.label_theme.font;
 
+	ui.eat_event = false;
+
 	pad : float = 10;
 	k := window_state.height * 0.05;
 	r := GetRect.get_rect(pad, pad, 3*k, k);
 
 	ui.reset_visible = GetRect.button(r, "Reset", *theme.button_theme);
+	ui.eat_event |= ui.reset_visible;
 	r.y += k + pad;
 
 	ui.run_star = GetRect.button(r, "Run star", *theme.button_theme);
+	ui.eat_event |= ui.run_star;
 	r.y += k + pad;
 
 	ui.run_closure = GetRect.button(r, "Run closure", *theme.button_theme);
+	ui.eat_event |= ui.run_closure;
 	r.y += k + pad;
 
 	ui.run_link = GetRect.button(r, "Run link", *theme.button_theme);
+	ui.eat_event |= ui.run_link;
 	r.y += k + pad;
 
 	ui.run_boundary = GetRect.button(r, "Run boundary", *theme.button_theme);
+	ui.eat_event |= ui.run_boundary;
+	r.y += k + pad;
+
+	ui.add_point = GetRect.button(r, "Add point", *theme.button_theme);
+	ui.eat_event |= ui.add_point;
 	r.y += k + pad;
 
 	GetRect.draw_popups();
@@ -328,3 +424,28 @@ simplicial_from_vertex ::(mesh: Mesh, i: u32) -> Simplicial_Complex {
 	return make_simplicial(v, e, f);
 }
 
+get_color :: (i: int) -> Vector3 {
+	return make_vector3(
+		fmod(cast(float) i, 100) / 100,
+		fmod(cast(float) i, 200) / 200,
+		fmod(cast(float) i, 300) / 300
+	);
+}
+
+ray_from_camera :: (window: Window_State, scene: Scene_State) -> Collision.Ray {
+	mouse_x, mouse_y, success := get_mouse_pointer_position(window.handle, true);
+
+	ndc := make_vector2(2.0 * mouse_x / window.width - 1, 2.0 * mouse_y / window.height - 1);
+	hcc := make_vector4(ndc.x, ndc.y, 1, 1);
+	projection := perspective(1.0, cast(float) window.height / window.width, 500, 0.01);
+	projection_inv, invertible1 := inverse(projection);
+	if !invertible1 return .{};
+	ecc := projection_inv * hcc;
+
+	view := look_at_matrix(scene.camera_pos, scene.camera_target);
+	view_inv, invertible2 := inverse(view);
+	if !invertible2 return .{};
+	ray := normalize((view_inv * ecc).xyz);
+
+	return Collision.ray(scene.camera_pos, ray);
+}
