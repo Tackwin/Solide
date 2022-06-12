@@ -24,6 +24,8 @@ Vector3u32 :: struct {
 	x : u32 = 0;
 	y : u32 = 0;
 	z : u32 = 0;
+	#place x;
+	comp : [3] u32 = ---;
 }
 
 Mesh :: struct {
@@ -60,6 +62,22 @@ Mesh :: struct {
 	cpu_buffer : [..] Vertex;
 };
 
+Half_Edge :: struct {
+	vertex := -1;
+	edge := -1;
+	face := -1;
+
+	twin := -1;
+	next := -1;
+};
+
+Half_Mesh :: struct {
+	vertices : [] int;
+	edges : [] int;
+	faces : [] int;
+
+	half_edges : [] Half_Edge;
+};
 
 load_mesh :: (file: string) -> Mesh {
 	data, success := read_entire_file(file);
@@ -188,6 +206,79 @@ load_mesh :: (file: string) -> Mesh {
 	return mesh;
 }
 
+construct_half_mesh :: (mesh: Mesh) -> Half_Mesh {
+	half_mesh : Half_Mesh;
+	
+	array_resize(*half_mesh.vertices, mesh.nvert);
+	array_resize(*half_mesh.edges, mesh.nedge);
+	array_resize(*half_mesh.faces, mesh.nface);
+
+	for * half_mesh.vertices { <<it = -1; }
+	for * half_mesh.edges { <<it = -1; }
+	for * half_mesh.faces { <<it = -1; }
+
+	edge_table : Table(u64, int);
+
+	half_edges : [..] Half_Edge;
+	array_reserve(*half_edges, mesh.nface * 3);
+
+	map :: (a: u32, b: u32) -> u64 { return cast(u64) (a * 0xffff_ffff) + b; };
+
+	for f, f_index: mesh.faces {
+		half_mesh.faces[f_index] = half_edges.count;
+
+		for i: 0..2 {
+			a := f.comp[(i + 0) % 3];
+			b := f.comp[(i + 1) % 3];
+			
+
+			table_set(*edge_table, map(a, b), half_edges.count);
+			half_edges.count += 1;
+			half_edges[half_edges.count - 1].face = f_index;
+
+			if half_mesh.vertices[a] < 0 {
+				half_mesh.vertices[a] = half_edges.count - 1;
+				half_edges[half_edges.count - 1].vertex = a;
+			}
+			else {
+				half_edges[half_edges.count - 1].vertex = half_mesh.vertices[a];
+			}
+		}
+
+
+		for i: 0..2 {
+			a := f.comp[(i + 0) % 3];
+			b := f.comp[(i + 1) % 3];
+			c := f.comp[(i + 2) % 3];
+
+			curr, found1 := table_find(edge_table, map(a, b));
+			assert(found1);
+
+			next, found2 := table_find(edge_table, map(b, c));
+			assert(found2);
+			half_edges[curr].next = next;
+
+			twin, found3 := table_find(edge_table, map(b, a));
+			if found3 {
+				half_edges[curr].twin = twin;
+				half_edges[twin].twin = curr;
+			}
+		}
+	}
+
+	for mesh.edges {
+		idx, found := table_find(edge_table, map(it.a, it.b));
+		assert(found);
+
+		half_mesh.edges[it_index] = idx;
+		half_edges[idx].edge = it_index;
+		half_edges[half_edges[idx].twin].edge = it_index;
+	}
+	half_mesh.half_edges = half_edges;
+
+	return half_mesh;
+}
+
 free_mesh :: (mesh : Mesh) {
 	array_free(mesh.vertices);
 	array_free(mesh.faces);
@@ -201,6 +292,13 @@ free_mesh :: (mesh : Mesh) {
 	uninit(*mesh.pair_vertex_edge_map);
 
 	array_free(mesh.cpu_buffer);
+}
+
+free_half_mesh :: (half_mesh: Half_Mesh) {
+	array_free(mesh.vertices);
+	array_free(mesh.faces);
+	array_free(mesh.edges);
+	array_free(mesh.half_edges);
 }
 
 update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
@@ -423,4 +521,19 @@ build_vector_list :: (mesh: Mesh, vertices: ..u32) -> [..] float {
 
 	for vertices v[it] = 1;
 	return v;
+}
+
+cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	curr := half_mesh.half_edges[half_edge];
+	next := half_mesh.half_edges[curr.next];
+	next_next := half_mesh.half_edges[next.next];
+	
+	a := mesh.vertices[curr.vertex];
+	b := mesh.vertices[next.vertex];
+	c := mesh.vertices[next_next.vertex];
+
+	cos := dot(normalize(a - c), normalize(b - c));
+	sin := length(cross(normalize(a - c), normalize(b - c)));
+
+	return cos / sin;
 }

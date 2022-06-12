@@ -16,6 +16,7 @@ MKL :: #import "src/mkl";
 Geometry :: #import "src/geometry";
 Collision :: #import "src/collision";
 DEC :: #import "src/dec";
+Color :: #import "src/color";
 #scope_export
 
 Window_State :: struct {
@@ -54,6 +55,7 @@ Scene_State :: struct {
 
 	shader : Shader;
 	mesh   : Mesh;
+	half_mesh : Half_Mesh;
 
 	selected_simplicial : Geometry.Simplicial_Complex;
 
@@ -71,12 +73,14 @@ Ui_State :: struct {
 	eat_event := false;
 
 	reset_visible := false;
+	show_vertex_interpolated := false;
 
 	add_point := false;
 	run_star := false;
 	run_closure := false;
 	run_link := false;
 	run_boundary := false;
+	run_cotan := false;
 };
 
 window_state : Window_State;
@@ -99,7 +103,8 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("model.obj");
+	scene.mesh   = load_mesh("spot.obj");
+	scene.half_mesh = construct_half_mesh(scene.mesh);
 
 	// init Simplicial.
 	array_resize(*scene.selected_simplicial.vertices, scene.mesh.vertices.count);
@@ -235,6 +240,15 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		Geometry.swap(*boundary, *scene.selected_simplicial);
 	}
 
+	if ui.run_cotan {
+		for scene.half_mesh.vertices {
+			co := cotan(it, scene.half_mesh, scene.mesh);
+			t := 1.0 / (1.0 + exp(co));
+			scene.mesh.vertex_colors[it_index] = Color.map(t);
+		}
+		ui.show_vertex_interpolated = true;
+	}
+
 	update_ray_picking(scene, ui);
 
 	for * scene.mesh.vertex_visible {
@@ -254,7 +268,7 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		old := false;
 		if scene.selected_point >= 0 old = scene.mesh.vertex_visible[scene.selected_point];
 		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = true;
-		update_gpu_data(*scene.mesh, false);
+		update_gpu_data(*scene.mesh, ui.show_vertex_interpolated);
 		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = old;
 	}
 }
@@ -385,6 +399,16 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 	ui.eat_event |= ui.add_point;
 	r.y += k + pad;
 
+	ui.run_cotan = GetRect.button(r, "Cotan", *theme.button_theme);
+	ui.eat_event |= ui.run_cotan;
+	r.y += k + pad;
+
+	if GetRect.button(r, "Toggle Vertex", *theme.button_theme) {
+		ui.eat_event |= true;
+		ui.show_vertex_interpolated = !ui.show_vertex_interpolated;
+	}
+	r.y += k + pad;
+
 	GetRect.draw_popups();
 }
 
@@ -469,4 +493,6 @@ ray_from_camera :: (window: Window_State, scene: Scene_State) -> Collision.Ray {
 
 	return Collision.ray(pos, ray);
 }
+
+
 
