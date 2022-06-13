@@ -1,6 +1,7 @@
 #scope_file
 #import "Basic";
 #import "src/mesh";
+#import "Math";
 MKL :: #import "src/mkl";
 
 #import "src/std";
@@ -127,4 +128,60 @@ max_1 :: (S: Simplicial_Complex) {
 	for * S.vertices if <<it > 0 then <<it = 1;
 	for * S.edges    if <<it > 0 then <<it = 1;
 	for * S.faces    if <<it > 0 then <<it = 1;
+}
+
+cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	curr := half_mesh.half_edges[half_edge];
+	next := half_mesh.half_edges[curr.next];
+	next_next := half_mesh.half_edges[next.next];
+	
+	a := mesh.vertices[curr.vertex];
+	b := mesh.vertices[next.vertex];
+	c := mesh.vertices[next_next.vertex];
+
+	cos := dot(normalize(a - c), normalize(b - c));
+	sin := length(cross(normalize(a - c), normalize(b - c)));
+
+	return cos / sin;
+}
+
+barycentric_dual_area :: (half_vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	n := 0;
+	sum := 0.0;
+
+	orig := half_mesh.half_edges[half_mesh.vertices[half_vertex]].edge;
+	edge := orig;
+	
+	while true {
+		{
+			a := mesh.vertices[mesh.edges[edge].a];
+			b := mesh.vertices[mesh.edges[edge].b];
+
+			co := cotan(edge, half_mesh, mesh);
+			l := length_squared(b - a);
+
+			sum += l * co;
+
+			n += 1;
+		}
+		edge = half_mesh.half_edges[half_mesh.edges[edge]].twin;
+		if edge == orig break;
+
+		{
+			a := mesh.vertices[mesh.edges[edge].a];
+			b := mesh.vertices[mesh.edges[edge].b];
+
+			co := cotan(edge, half_mesh, mesh);
+			l := length_squared(b - a);
+
+			sum += l * co;
+
+			n += 1;
+		}
+
+		edge = half_mesh.half_edges[half_mesh.edges[edge]].next;
+		if edge == orig break;
+	}
+
+	return n / sum;
 }

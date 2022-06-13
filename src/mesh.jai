@@ -7,7 +7,7 @@
 #import "Random";
 #import "Hash_Table";
 MKL :: #import "src/mkl";
-
+#import "src/std";
 #scope_export
 Vector2u32 :: struct {
 	a : u32 = 0;
@@ -207,6 +207,10 @@ load_mesh :: (file: string) -> Mesh {
 }
 
 construct_half_mesh :: (mesh: Mesh) -> Half_Mesh {
+	map :: (a: u32, b: u32) -> u64 { return (cast(u64) a) * 0xffff_ffff + b; };
+	set_map :: (a: u32, b: u32) -> u64 { return (cast(u64) min(a, b)) * 0xffff_ffff + max(a, b); };
+
+	
 	half_mesh : Half_Mesh;
 	
 	array_resize(*half_mesh.vertices, mesh.nvert);
@@ -218,11 +222,16 @@ construct_half_mesh :: (mesh: Mesh) -> Half_Mesh {
 	for * half_mesh.faces { <<it = -1; }
 
 	edge_table : Table(u64, int);
+	defer uninit(*edge_table);
+	pair_edge_table : Table(u64, int);
+	defer uninit(*pair_edge_table);
+
+	for mesh.edges {
+		table_set(*pair_edge_table, set_map(it.a, it.b), it_index);
+	}
 
 	half_edges : [..] Half_Edge;
 	array_reserve(*half_edges, mesh.nface * 3);
-
-	map :: (a: u32, b: u32) -> u64 { return cast(u64) (a * 0xffff_ffff) + b; };
 
 	for f, f_index: mesh.faces {
 		half_mesh.faces[f_index] = half_edges.count;
@@ -236,13 +245,12 @@ construct_half_mesh :: (mesh: Mesh) -> Half_Mesh {
 			half_edges.count += 1;
 			half_edges[half_edges.count - 1].face = f_index;
 
-			if half_mesh.vertices[a] < 0 {
-				half_mesh.vertices[a] = half_edges.count - 1;
-				half_edges[half_edges.count - 1].vertex = a;
-			}
-			else {
-				half_edges[half_edges.count - 1].vertex = half_mesh.vertices[a];
-			}
+			edge_idx, found := table_find(pair_edge_table, set_map(a, b));
+			assert(found);
+			half_edges[half_edges.count - 1].edge = edge_idx;
+
+			if half_mesh.vertices[a] < 0 then half_mesh.vertices[a] = half_edges.count - 1;
+			half_edges[half_edges.count - 1].vertex = a;
 		}
 
 
@@ -271,9 +279,8 @@ construct_half_mesh :: (mesh: Mesh) -> Half_Mesh {
 		assert(found);
 
 		half_mesh.edges[it_index] = idx;
-		half_edges[idx].edge = it_index;
-		half_edges[half_edges[idx].twin].edge = it_index;
 	}
+
 	half_mesh.half_edges = half_edges;
 
 	return half_mesh;
@@ -523,17 +530,6 @@ build_vector_list :: (mesh: Mesh, vertices: ..u32) -> [..] float {
 	return v;
 }
 
-cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
-	curr := half_mesh.half_edges[half_edge];
-	next := half_mesh.half_edges[curr.next];
-	next_next := half_mesh.half_edges[next.next];
+half_edge :: (half_mesh: Half_Edge) -> Half_Edge {
 	
-	a := mesh.vertices[curr.vertex];
-	b := mesh.vertices[next.vertex];
-	c := mesh.vertices[next_next.vertex];
-
-	cos := dot(normalize(a - c), normalize(b - c));
-	sin := length(cross(normalize(a - c), normalize(b - c)));
-
-	return cos / sin;
 }

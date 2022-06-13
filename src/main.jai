@@ -81,6 +81,7 @@ Ui_State :: struct {
 	run_link := false;
 	run_boundary := false;
 	run_cotan := false;
+	run_barycentric_dual_area := false;
 };
 
 window_state : Window_State;
@@ -103,7 +104,7 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("spot.obj");
+	scene.mesh   = load_mesh("model.obj");
 	scene.half_mesh = construct_half_mesh(scene.mesh);
 
 	// init Simplicial.
@@ -242,7 +243,16 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 
 	if ui.run_cotan {
 		for scene.half_mesh.vertices {
-			co := cotan(it, scene.half_mesh, scene.mesh);
+			co := Geometry.cotan(it, scene.half_mesh, scene.mesh);
+			t := 1.0 / (1.0 + exp(co));
+			scene.mesh.vertex_colors[it_index] = Color.map(t);
+		}
+		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.run_barycentric_dual_area {
+		for scene.half_mesh.vertices {
+			co := Geometry.barycentric_dual_area(it, scene.half_mesh, scene.mesh);
 			t := 1.0 / (1.0 + exp(co));
 			scene.mesh.vertex_colors[it_index] = Color.map(t);
 		}
@@ -401,6 +411,10 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 
 	ui.run_cotan = GetRect.button(r, "Cotan", *theme.button_theme);
 	ui.eat_event |= ui.run_cotan;
+	r.y += k + pad;
+
+	ui.run_barycentric_dual_area = GetRect.button(r, "Barycenter", *theme.button_theme);
+	ui.eat_event |= ui.run_barycentric_dual_area;
 	r.y += k + pad;
 
 	if GetRect.button(r, "Toggle Vertex", *theme.button_theme) {

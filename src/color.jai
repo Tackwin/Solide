@@ -264,8 +264,8 @@ Viridis_Color_Map : [256]Vector3 : Vector3.[
 
 
 map :: (f: float, color_map : [] Vector3 = Viridis_Color_Map) -> Vector3 {
-	a := color_map[0 + cast(int) (f * color_map.count)];
-	b := color_map[1 + cast(int) (f * color_map.count)];
+	a := color_map[0 + cast(int) (f * (color_map.count - 1) * 0.999)];
+	b := color_map[1 + cast(int) (f * (color_map.count - 1) * 0.999)];
 	t := f * color_map.count - cast(int) (f * color_map.count);
 
 	return a * (1 - t) + b * t;
