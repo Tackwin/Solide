@@ -104,7 +104,7 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("model.obj");
+	scene.mesh   = load_mesh("spot.obj");
 	scene.half_mesh = construct_half_mesh(scene.mesh);
 
 	// init Simplicial.
@@ -251,11 +251,15 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	}
 
 	if ui.run_barycentric_dual_area {
+		ts := NewArray(scene.half_mesh.vertices.count, float, allocator=temp);
+
+		max_t := 0.0;
 		for scene.half_mesh.vertices {
-			co := Geometry.barycentric_dual_area(it, scene.half_mesh, scene.mesh);
-			t := 1.0 / (1.0 + exp(co));
-			scene.mesh.vertex_colors[it_index] = Color.map(t);
+			area := Geometry.barycentric_dual_area(it_index, scene.half_mesh, scene.mesh);
+			ts[it_index] = area;
+			max_t = max(max_t, area);
 		}
+		for ts scene.mesh.vertex_colors[it_index] = Color.map(it / max_t);
 		ui.show_vertex_interpolated = true;
 	}
 

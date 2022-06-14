@@ -146,42 +146,33 @@ cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 }
 
 barycentric_dual_area :: (half_vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
-	n := 0;
 	sum := 0.0;
 
-	orig := half_mesh.half_edges[half_mesh.vertices[half_vertex]].edge;
+	orig := half_mesh.vertices[half_vertex];
 	edge := orig;
 	
 	while true {
-		{
-			a := mesh.vertices[mesh.edges[edge].a];
-			b := mesh.vertices[mesh.edges[edge].b];
 
-			co := cotan(edge, half_mesh, mesh);
-			l := length_squared(b - a);
+		a := half_mesh.half_edges[edge].vertex;
+		edge = half_mesh.half_edges[edge].next;
+		b := half_mesh.half_edges[edge].vertex;
+		edge = half_mesh.half_edges[edge].next;
+		c := half_mesh.half_edges[edge].vertex;
+		edge = half_mesh.half_edges[edge].twin;
 
-			sum += l * co;
+		i := mesh.vertices[a];
+		j := mesh.vertices[b];
+		k := mesh.vertices[c];
 
-			n += 1;
-		}
-		edge = half_mesh.half_edges[half_mesh.edges[edge]].twin;
-		if edge == orig break;
+		lij := length(j - i);
+		ljk := length(k - j);
+		lki := length(i - k);
 
-		{
-			a := mesh.vertices[mesh.edges[edge].a];
-			b := mesh.vertices[mesh.edges[edge].b];
+		s := (lij + ljk + lki) / 2;
+		sum += sqrt(s * (s - lij) * (s - ljk) * (s - lki));
 
-			co := cotan(edge, half_mesh, mesh);
-			l := length_squared(b - a);
-
-			sum += l * co;
-
-			n += 1;
-		}
-
-		edge = half_mesh.half_edges[half_mesh.edges[edge]].next;
 		if edge == orig break;
 	}
 
-	return n / sum;
+	return sum / 3;
 }
