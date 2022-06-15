@@ -130,7 +130,7 @@ max_1 :: (S: Simplicial_Complex) {
 	for * S.faces    if <<it > 0 then <<it = 1;
 }
 
-cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+angle :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	curr := half_mesh.half_edges[half_edge];
 	next := half_mesh.half_edges[curr.next];
 	next_next := half_mesh.half_edges[next.next];
@@ -142,37 +142,6 @@ cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	cos := dot(normalize(a - c), normalize(b - c));
 	sin := length(cross(normalize(a - c), normalize(b - c)));
 
-	return cos / sin;
+	return atan2(sin, cos);
 }
 
-barycentric_dual_area :: (half_vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
-	sum := 0.0;
-
-	orig := half_mesh.vertices[half_vertex];
-	edge := orig;
-	
-	while true {
-
-		a := half_mesh.half_edges[edge].vertex;
-		edge = half_mesh.half_edges[edge].next;
-		b := half_mesh.half_edges[edge].vertex;
-		edge = half_mesh.half_edges[edge].next;
-		c := half_mesh.half_edges[edge].vertex;
-		edge = half_mesh.half_edges[edge].twin;
-
-		i := mesh.vertices[a];
-		j := mesh.vertices[b];
-		k := mesh.vertices[c];
-
-		lij := length(j - i);
-		ljk := length(k - j);
-		lki := length(i - k);
-
-		s := (lij + ljk + lki) / 2;
-		sum += sqrt(s * (s - lij) * (s - ljk) * (s - lki));
-
-		if edge == orig break;
-	}
-
-	return sum / 3;
-}

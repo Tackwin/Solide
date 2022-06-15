@@ -82,6 +82,9 @@ Ui_State :: struct {
 	run_boundary := false;
 	run_cotan := false;
 	run_barycentric_dual_area := false;
+	run_hodge0 := false;
+	run_hodge1 := false;
+	run_hodge2 := false;
 };
 
 window_state : Window_State;
@@ -106,6 +109,7 @@ main :: () {
 	scene.shader = shader_init();
 	scene.mesh   = load_mesh("spot.obj");
 	scene.half_mesh = construct_half_mesh(scene.mesh);
+	build_matrices(scene.half_mesh, *scene.mesh);
 
 	// init Simplicial.
 	array_resize(*scene.selected_simplicial.vertices, scene.mesh.vertices.count);
@@ -118,8 +122,6 @@ main :: () {
 	scene.camera.pos    = .{ 1, 0, 1 };
 	scene.camera.target = .{ 0, 0, 0 };
 
-	scene.mesh.A0 = build_vertex_edge_adjacency_matrix(scene.mesh);
-	scene.mesh.A1 = build_edge_face_adjacency_matrix(scene.mesh);
 
 	ui : Ui_State;
 
@@ -243,7 +245,7 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 
 	if ui.run_cotan {
 		for scene.half_mesh.vertices {
-			co := Geometry.cotan(it, scene.half_mesh, scene.mesh);
+			co := cotan(it, scene.half_mesh, scene.mesh);
 			t := 1.0 / (1.0 + exp(co));
 			scene.mesh.vertex_colors[it_index] = Color.map(t);
 		}
@@ -255,12 +257,49 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 
 		max_t := 0.0;
 		for scene.half_mesh.vertices {
-			area := Geometry.barycentric_dual_area(it_index, scene.half_mesh, scene.mesh);
+			area := barycentric_dual_area(it_index, scene.half_mesh, scene.mesh);
 			ts[it_index] = area;
 			max_t = max(max_t, area);
 		}
 		for ts scene.mesh.vertex_colors[it_index] = Color.map(it / max_t);
 		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.run_hodge0 {
+		star0 := scene.mesh.hodge_star_0;
+		
+		max_t := 0.0;
+		for star0.values max_t = max(max_t, it);
+		for star0.values scene.mesh.vertex_colors[it_index] = Color.map(it / max_t);
+		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.run_hodge1 {
+		star1 := scene.mesh.hodge_star_1;
+		
+		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
+		ns := NewArray(scene.mesh.nvert, float, allocator=temp);
+		for * ns { <<it = 0; }
+		max_t := 0.0;
+		min_t := 0.0;
+		for star1.values { max_t = max(max_t, it); min_t = min(min_t, it); }
+		for star1.values {
+			ts[scene.mesh.edges[it_index].a] += (it - min_t) / (max_t - min_t);
+			ts[scene.mesh.edges[it_index].b] += (it - min_t) / (max_t - min_t);
+			ns[scene.mesh.edges[it_index].a] += 1;
+			ns[scene.mesh.edges[it_index].b] += 1;
+		}
+		for * scene.mesh.vertex_colors { <<it = Color.map(ts[it_index] / ns[it_index]); }
+		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.run_hodge2 {
+		star2 := scene.mesh.hodge_star_2;
+		
+		max_t := 0.0;
+		for star2.values max_t = max(max_t, it);
+		for * scene.mesh.face_colors { <<it = Color.map(star2.values[it_index] / max_t); }
+		ui.show_vertex_interpolated = false;
 	}
 
 	update_ray_picking(scene, ui);
@@ -271,14 +310,17 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	for * scene.mesh.edge_visible   {
 		<<it = scene.selected_simplicial.edges[it_index] > 0    || scene.hover_edge == it_index;
 	}
-	for * scene.mesh.face_colors   {
-		c := get_color(it_index);
-		if scene.selected_simplicial.faces[it_index] > 0 || scene.hover_face == it_index
-			c = .{1, 1, 1};
-		<<it = c;
+	temp_colors := NewArray(scene.mesh.face_colors.count, Vector3, allocator=temp);
+	for * scene.mesh.face_colors    {
+		temp_colors[it_index] = <<it;
+		if scene.selected_simplicial.faces[it_index] > 0 || scene.hover_face == it_index then
+			temp_colors[it_index] = .{1, 1, 1};
 	}
 
 	{
+		t := scene.mesh.face_colors;
+		scene.mesh.face_colors.data = temp_colors.data;
+		defer scene.mesh.face_colors.data = t.data;
 		old := false;
 		if scene.selected_point >= 0 old = scene.mesh.vertex_visible[scene.selected_point];
 		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = true;
@@ -353,6 +395,8 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	// glDepthMask(GL_TRUE);
+	// glEnable(GL_CULL_FACE);
+	// glCullFace(GL_BACK);
 	glEnable(GL_DEPTH_TEST);
 	view := look_at_matrix(scene.camera.pos, scene.camera.target);
 	set_uniform(scene.shader, "view", view);
@@ -419,6 +463,18 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 
 	ui.run_barycentric_dual_area = GetRect.button(r, "Barycenter", *theme.button_theme);
 	ui.eat_event |= ui.run_barycentric_dual_area;
+	r.y += k + pad;
+
+	ui.run_hodge0 = GetRect.button(r, "*0", *theme.button_theme);
+	ui.eat_event |= ui.run_hodge0;
+	r.y += k + pad;
+
+	ui.run_hodge1 = GetRect.button(r, "*1", *theme.button_theme);
+	ui.eat_event |= ui.run_hodge1;
+	r.y += k + pad;
+
+	ui.run_hodge2 = GetRect.button(r, "*2", *theme.button_theme);
+	ui.eat_event |= ui.run_hodge2;
 	r.y += k + pad;
 
 	if GetRect.button(r, "Toggle Vertex", *theme.button_theme) {

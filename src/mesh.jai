@@ -54,6 +54,13 @@ Mesh :: struct {
 	A0 : MKL.Sparse_Matrix;
 	A1 : MKL.Sparse_Matrix;
 
+	hodge_star_0: MKL.Sparse_Matrix;
+	hodge_star_1: MKL.Sparse_Matrix;
+	hodge_star_2: MKL.Sparse_Matrix;
+
+	d0 : MKL.Sparse_Matrix;
+	d1 : MKL.Sparse_Matrix;
+
 	Vertex :: struct {
 		pos   : Vector3;
 		color : Vector3;
@@ -96,14 +103,17 @@ load_mesh :: (file: string) -> Mesh {
 		if !found break;
 
 		line = trim(line, " \r\t\n");
+		if line.count == 0 continue;
 
 		v : Vector3    = ---;
 		f : Vector3u32 = ---;
+		fn : Vector3u32 = ---;
 		ft : Vector3u32 = ---;
 
 		     if scan2(line, "v % % %", *v.x, *v.y, *v.z) mesh.nvert += 1;
 		else if scan2(line, "f % % %", *f.x, *f.y, *f.z) mesh.nface += 1;
 		else if scan2(line, "f %/% %/% %/%", *f.x, *ft.x, *f.y, *ft.y, *f.z, *ft.z) mesh.nface += 1;
+		else if scan2(line, "f %/%/% %/%/% %/%/%", *f.x, *ft.x, *fn.x, *f.y, *ft.y, *fn.y, *f.z, *ft.z, *fn.z) mesh.nface += 1;
 	}
 	
 	init(*mesh.pair_vertex_edge_map, mesh.nvert);
@@ -123,15 +133,18 @@ load_mesh :: (file: string) -> Mesh {
 		if !found break;
 
 		line = trim(line, " \r\t\n");
+		if line.count == 0 continue;
 
 		v : Vector3    = ---;
 		f : Vector3u32 = ---;
 		ft : Vector3u32 = ---;
+		fn : Vector3u32 = ---;
 
 		     if scan2(line, "v % % %", *v.x, *v.y, *v.z) array_add(*mesh.vertices, v);
 		else if scan2(line, "f % % %", *f.x, *f.y, *f.z) array_add(*mesh.faces, f);
 		else if scan2(line, "f %/% %/% %/%", *f.x, *ft.x, *f.y, *ft.y, *f.z, *ft.z)
 			array_add(*mesh.faces, f);
+		else if scan2(line, "f %/%/% %/%/% %/%/%", *f.x, *ft.x, *fn.x, *f.y, *ft.y, *fn.y, *f.z, *ft.z, *fn.z) mesh.nface += 1;
 	}
 	for * mesh.faces {
 		it.x -= 1;
@@ -308,6 +321,16 @@ free_half_mesh :: (half_mesh: Half_Mesh) {
 	array_free(mesh.half_edges);
 }
 
+build_matrices :: (half_mesh: Half_Mesh, mesh: *Mesh) {
+	mesh.A0 = build_vertex_edge_adjacency_matrix(mesh);
+	mesh.A1 = build_edge_face_adjacency_matrix(mesh);
+	mesh.hodge_star_0 = build_hodge_star_0(half_mesh, mesh);
+	mesh.hodge_star_1 = build_hodge_star_1(half_mesh, mesh);
+	mesh.hodge_star_2 = build_hodge_star_2(half_mesh, mesh);
+	mesh.d0 = build_d0(mesh);
+	mesh.d1 = build_d1(mesh);
+}
+
 update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
 	mesh.cpu_buffer.count = 0;
 	make_vertex :: (p : Vector3, c : Vector3) -> Mesh.Vertex {
@@ -394,7 +417,7 @@ update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
 	}
 
 	push_edge:: (a : Vector3, b : Vector3, c : Vector3, buffer : *[..] Mesh.Vertex) {
-		R       : float : 0.005;
+		R       : float : 0.001;
 
 		x := (b - a) / 2;
 		z := Vector3.{0, 0, 1};
@@ -530,6 +553,188 @@ build_vector_list :: (mesh: Mesh, vertices: ..u32) -> [..] float {
 	return v;
 }
 
-half_edge :: (half_mesh: Half_Edge) -> Half_Edge {
+
+cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	curr := half_mesh.half_edges[half_edge];
+	next := half_mesh.half_edges[curr.next];
+	next_next := half_mesh.half_edges[next.next];
 	
+	a := mesh.vertices[curr.vertex];
+	b := mesh.vertices[next.vertex];
+	c := mesh.vertices[next_next.vertex];
+
+	cos := dot(normalize(a - c), normalize(b - c));
+	sin := length(cross(normalize(a - c), normalize(b - c)));
+
+	return cos / sin;
+}
+
+barycentric_dual_area :: (half_vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	sum := 0.0;
+
+	orig := half_mesh.vertices[half_vertex];
+	edge := orig;
+	
+	while true {
+
+		a := half_mesh.half_edges[edge].vertex;
+		edge = half_mesh.half_edges[edge].next;
+		b := half_mesh.half_edges[edge].vertex;
+		edge = half_mesh.half_edges[edge].next;
+		c := half_mesh.half_edges[edge].vertex;
+		edge = half_mesh.half_edges[edge].twin;
+
+		i := mesh.vertices[a];
+		j := mesh.vertices[b];
+		k := mesh.vertices[c];
+
+		lij := length(j - i);
+		ljk := length(k - j);
+		lki := length(i - k);
+
+		s := (lij + ljk + lki) / 2;
+		sum += sqrt(s * (s - lij) * (s - ljk) * (s - lki));
+
+		if edge == orig break;
+	}
+
+	return sum / 3;
+}
+
+build_hodge_star_0 :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows := mesh.vertices.count;
+	cols := rows;
+
+	rows_start := NewArray(rows, s64);
+	col_idx    := NewArray(rows + 1, s64);
+	values     := NewArray(rows, float);
+
+	for * rows_start { <<it = it_index; }
+	for * col_idx    { <<it = it_index; }
+	for * values {
+		<<it = barycentric_dual_area(it_index, half_mesh, mesh);
+	}
+
+	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
+}
+
+build_hodge_star_1 :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows := mesh.edges.count;
+	cols := rows;
+
+	rows_start := NewArray(rows, s64);
+	col_idx    := NewArray(rows + 1, s64);
+	values     := NewArray(rows, float);
+
+	for * rows_start { <<it = it_index; }
+	for * col_idx    { <<it = it_index; }
+	for * values {
+		a := cotan(half_mesh.edges[it_index], half_mesh, mesh);
+		b := cotan(half_mesh.half_edges[half_mesh.edges[it_index]].twin, half_mesh, mesh);
+
+		<<it = (a + b) / 2;
+	}
+
+	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
+}
+
+build_hodge_star_2 :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows := mesh.faces.count;
+	cols := rows;
+
+	rows_start := NewArray(rows, s64);
+	col_idx    := NewArray(rows + 1, s64);
+	values     := NewArray(rows, float);
+
+	for * rows_start { <<it = it_index; }
+	for * col_idx    { <<it = it_index; }
+	for mesh.faces {
+		i := mesh.vertices[it.x];
+		j := mesh.vertices[it.y];
+		k := mesh.vertices[it.z];
+
+		lij := length(j - i);
+		ljk := length(k - j);
+		lki := length(i - k);
+
+		s := (lij + ljk + lki) / 2;
+		values[it_index] = sqrt(s * (s - lij) * (s - ljk) * (s - lki));
+	}
+
+	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
+}
+
+build_d0 :: (mesh: *Mesh) -> MKL.Sparse_Matrix {
+
+	rows := mesh.nedge;
+	cols := mesh.nvert;
+
+	values     := NewArray(rows * 2, float);
+	col_idx    := NewArray(values.count, s64);
+	rows_start := NewArray(values.count + 1, s64);
+
+	rows_start[rows_start.count - 1] = values.count;
+
+	for e: 0..rows-1 {
+		rows_start[e] = 2 * e;
+
+		col_idx[2 * e + 0] = min(mesh.edges[e].a, mesh.edges[e].b);
+		col_idx[2 * e + 1] = max(mesh.edges[e].a, mesh.edges[e].b);
+
+		if mesh.edges[e].a < mesh.edges[e].b {
+			values[2 * e + 0] = -1;
+			values[2 * e + 1] = +1;
+		}
+		else {
+			values[2 * e + 0] = +1;
+			values[2 * e + 1] = -1;
+		}
+		
+	}
+
+	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
+}
+
+build_d1 :: (mesh: *Mesh) -> MKL.Sparse_Matrix {
+
+	rows := mesh.nface;
+	cols := mesh.nedge;
+
+	values     := NewArray(rows * 3, float);
+	col_idx    := NewArray(values.count, s64);
+	rows_start := NewArray(values.count + 1, s64);
+
+	rows_start[rows_start.count - 1] = values.count;
+
+	for f: 0..rows-1 {
+		a := mesh.faces[f].x;
+		b := mesh.faces[f].y;
+		c := mesh.faces[f].z;
+
+		rows_start[f] = 3 * f;
+
+		col_idx[3 * f + 0] = get_edge_index(mesh, mesh.faces[f].x, mesh.faces[f].y);
+		col_idx[3 * f + 1] = get_edge_index(mesh, mesh.faces[f].y, mesh.faces[f].z);
+		col_idx[3 * f + 2] = get_edge_index(mesh, mesh.faces[f].z, mesh.faces[f].x);
+
+		values[3 * f + 0] = ifx a == mesh.edges[get_edge_index(mesh, a, b)].a then 1.0 else -1.0;
+		values[3 * f + 1] = ifx b == mesh.edges[get_edge_index(mesh, b, c)].a then 1.0 else -1.0;
+		values[3 * f + 2] = ifx c == mesh.edges[get_edge_index(mesh, c, a)].a then 1.0 else -1.0;
+		
+		// Sort three values
+		if col_idx[f * 3 + 0] > col_idx[f * 3 + 1] {
+			Swap(*col_idx[f * 3 + 0], *col_idx[f * 3 + 1]);
+			Swap(*values [f * 3 + 0], *values [f * 3 + 1]);
+		}
+		if col_idx[f * 3 + 0] > col_idx[f * 3 + 2] {
+			Swap(*col_idx[f * 3 + 0], *col_idx[f * 3 + 2]);
+			Swap(*values [f * 3 + 0], *values [f * 3 + 2]);
+		}
+		if col_idx[f * 3 + 1] > col_idx[f * 3 + 2] {
+			Swap(*col_idx[f * 3 + 1], *col_idx[f * 3 + 2]);
+			Swap(*values [f * 3 + 1], *values [f * 3 + 2]);
+		}
+	}
+
+	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
 }

@@ -44,6 +44,13 @@ create_sparse_matrix :: (
 	return mat;
 }
 
+free :: (mat: Sparse_Matrix) {
+	free(mat.rows_start.data);
+	free(mat.col_idx.data);
+	free(mat.values.data);
+	mkl_sparse_destroy(mat.mat);
+}
+
 operator * :: (a: Sparse_Matrix, b: Sparse_Matrix) -> Sparse_Matrix {
 	c: Sparse_Matrix;
 
