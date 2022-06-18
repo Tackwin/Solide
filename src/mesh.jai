@@ -559,7 +559,7 @@ normal :: (face: int, mesh: Mesh) -> Vector3 {
 	b := mesh.vertices[mesh.faces[face].y];
 	c := mesh.vertices[mesh.faces[face].z];
 
-	return normalized(cross(b - a), cross(c - a));
+	return normalize(cross(b - a, c - a));
 }
 
 area :: (face: int, mesh: Mesh) -> float {
@@ -573,6 +573,14 @@ area :: (face: int, mesh: Mesh) -> float {
 
 	s := (lij + ljk + lki) / 2;
 	return sqrt(s * (s - lij) * (s - ljk) * (s - lki));
+}
+
+mean :: (face: int, mesh: Mesh) -> Vector3 {
+	i := mesh.vertices[mesh.faces[face].x];
+	j := mesh.vertices[mesh.faces[face].y];
+	k := mesh.vertices[mesh.faces[face].z];
+
+	return (i + j + k) / 3;
 }
 
 cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {

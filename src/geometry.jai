@@ -149,7 +149,7 @@ dihedral_angle :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	he := half_mesh.half_edges[half_edge];
 
 	eij := mesh.vertices[he.vertex] - mesh.vertices[half_mesh.half_edges[he.next].vertex];
-	eij := normalize(eij);
+	eij = normalize(eij);
 
 	face_a := he.face;
 	face_b := half_mesh.half_edges[he.twin].face;
@@ -215,4 +215,12 @@ vertex_normal_mean_curvature :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) 
 		N += (a + b) * (j - i);
 	}
 	return normalize(N);
+}
+
+angle_defect :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	sum := 2 * PI;
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
+		sum -= angle(it.out_half_edge, half_mesh, mesh);
+	}
+	return sum;
 }

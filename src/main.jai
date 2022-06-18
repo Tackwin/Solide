@@ -12,6 +12,7 @@ Input :: #import "Input";
 #import "src/std";
 #import "src/mesh";
 #import "src/shader";
+Render :: #import "src/render";
 MKL :: #import "src/mkl";
 Geometry :: #import "src/geometry";
 Collision :: #import "src/collision";
@@ -58,6 +59,7 @@ Scene_State :: struct {
 	half_mesh : Half_Mesh;
 
 	selected_simplicial : Geometry.Simplicial_Complex;
+	selected_half_edge := -1;
 
 	selected_point : s64 = -1;
 	hover_vertex : s64 = -1;
@@ -67,13 +69,18 @@ Scene_State :: struct {
 	run := false;
 
 	camera: Camera;
+
+	vertex_normals : [] Vector3;
 };
 
 Ui_State :: struct {
 	eat_event := false;
+	scroll_value := 0.0;
 
 	reset_visible := false;
 	show_vertex_interpolated := false;
+	show_half_edges := false;
+	show_normals := false;
 
 	add_point := false;
 	run_star := false;
@@ -86,6 +93,14 @@ Ui_State :: struct {
 	run_hodge1 := false;
 	run_hodge2 := false;
 	run_angle := false;
+	run_angle_defect := false;
+	run_next := false;
+	run_twin := false;
+	run_normal_angle_weighted := false;
+	run_normal_sphere_inscribed := false;
+	run_normal_area_weighted := false;
+	run_normal_gaussian_curvature := false;
+	run_normal_mean_curvature := false;
 };
 
 window_state : Window_State;
@@ -108,7 +123,7 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("spot.obj");
+	scene.mesh   = load_mesh("bob.obj");
 	scene.half_mesh = construct_half_mesh(scene.mesh);
 	build_matrices(scene.half_mesh, *scene.mesh);
 
@@ -122,7 +137,6 @@ main :: () {
 
 	scene.camera.pos    = .{ 1, 0, 1 };
 	scene.camera.target = .{ 0, 0, 0 };
-
 
 	ui : Ui_State;
 
@@ -321,6 +335,100 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		ui.show_vertex_interpolated = true;
 	}
 
+	if ui.run_angle_defect {
+		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
+
+		for 0..scene.mesh.nvert-1 {
+			ts[it] = Geometry.angle_defect(it, scene.half_mesh, scene.mesh);
+		}
+
+		max_t : float = 2 * PI;
+		min_t : float = -2 * PI;
+		for * scene.mesh.vertex_colors { <<it = Color.map((ts[it_index] - min_t) / (max_t - min_t)); }
+		ui.show_vertex_interpolated = true;
+	}
+	
+	if ui.run_next {
+		if scene.selected_half_edge < 0 {
+			scene.selected_half_edge = max(scene.selected_half_edge, 0);
+		} else {
+			scene.selected_half_edge = scene.half_mesh.half_edges[scene.selected_half_edge].next;
+		}
+	}
+
+	if ui.run_twin {
+		if scene.selected_half_edge < 0 {
+			scene.selected_half_edge = max(scene.selected_half_edge, 0);
+		} else {
+			scene.selected_half_edge = scene.half_mesh.half_edges[scene.selected_half_edge].twin;
+		}
+	}
+
+	if ui.run_normal_angle_weighted {
+		array_free(scene.vertex_normals);
+		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
+
+		for 0..scene.mesh.nvert-1 {
+			scene.vertex_normals[it] = Geometry.vertex_normal_angle_weighted(
+				it, scene.half_mesh, scene.mesh
+			);
+		}
+
+		ui.show_normals = true;
+	}
+
+	if ui.run_normal_sphere_inscribed {
+		array_free(scene.vertex_normals);
+		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
+
+		for 0..scene.mesh.nvert-1 {
+			scene.vertex_normals[it] = Geometry.vertex_normal_sphere_inscribed(
+				it, scene.half_mesh, scene.mesh
+			);
+		}
+
+		ui.show_normals = true;
+	}
+
+	if ui.run_normal_area_weighted {
+		array_free(scene.vertex_normals);
+		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
+
+		for 0..scene.mesh.nvert-1 {
+			scene.vertex_normals[it] = Geometry.vertex_normal_area_weighted(
+				it, scene.half_mesh, scene.mesh
+			);
+		}
+
+		ui.show_normals = true;
+	}
+
+	if ui.run_normal_gaussian_curvature {
+		array_free(scene.vertex_normals);
+		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
+
+		for 0..scene.mesh.nvert-1 {
+			scene.vertex_normals[it] = Geometry.vertex_normal_gaussian_curvature(
+				it, scene.half_mesh, scene.mesh
+			);
+		}
+
+		ui.show_normals = true;
+	}
+
+	if ui.run_normal_mean_curvature {
+		array_free(scene.vertex_normals);
+		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
+
+		for 0..scene.mesh.nvert-1 {
+			scene.vertex_normals[it] = Geometry.vertex_normal_mean_curvature(
+				it, scene.half_mesh, scene.mesh
+			);
+		}
+
+		ui.show_normals = true;
+	}
+
 	update_ray_picking(scene, ui);
 
 	for * scene.mesh.vertex_visible {
@@ -418,10 +526,44 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 	// glCullFace(GL_BACK);
 	glEnable(GL_DEPTH_TEST);
 	view := look_at_matrix(scene.camera.pos, scene.camera.target);
+	proj := projection(scene.camera);
 	set_uniform(scene.shader, "view", view);
-	set_uniform(scene.shader, "projection", projection(scene.camera));
+	set_uniform(scene.shader, "projection", proj);
 
 	render(scene.mesh, scene.shader);
+
+	if ui.show_half_edges {
+		instances := NewArray(scene.half_mesh.half_edges.count, Render.Arrow, allocator=temp);
+		for scene.half_mesh.half_edges {
+			a := scene.mesh.vertices[it.vertex];
+			b := scene.mesh.vertices[scene.half_mesh.half_edges[it.next].vertex];
+
+			c := mean(it.face, scene.mesh);
+
+			a = c + (a - c) * 0.9;
+			b = c + (b - c) * 0.9;
+
+			instances[it_index].a = a;
+			instances[it_index].b = b;
+			instances[it_index].r = area(it.face, scene.mesh);
+			instances[it_index].color = .{1, 1, 1};
+		}
+		Render.arrows(instances, proj * view, tip_ratio=0.3);
+	}
+	if ui.show_normals {
+		instances := NewArray(scene.vertex_normals.count, Render.Arrow, allocator=temp);
+		for scene.vertex_normals {
+			a := scene.mesh.vertices[it_index];
+			b := a + it * 0.025;
+
+			instances[it_index].a = a;
+			instances[it_index].b = b;
+			instances[it_index].r = 0.002;
+			instances[it_index].color = .{1, 1, 1};
+		}
+		Render.arrows(instances, proj * view, tip_ratio=0.1);
+	}
+
 	render_ui(scene, ui);
 
 	Simp.swap_buffers(window_state.handle);
@@ -432,6 +574,7 @@ render :: (mesh: Mesh, shader: Shader) {
 	glBindVertexArray(mesh.vao);
 	glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
 	glDrawArrays(GL_TRIANGLES, xx 0, xx mesh.cpu_buffer.count);
+
 }
 
 render_ui :: (scene: *Scene_State, ui: *Ui_State) {
@@ -447,64 +590,121 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 	font := theme.label_theme.font;
 
 	ui.eat_event = false;
-
 	pad : float = 10;
 	k := window_state.height * 0.05;
-	r := GetRect.get_rect(pad, pad, 3*k, k);
 
-	ui.reset_visible = GetRect.button(r, "Reset", *theme.button_theme);
-	ui.eat_event |= ui.reset_visible;
-	r.y += k + pad;
+	scroll_region := GetRect.get_rect(pad, pad, 5*k, window_state.height - 2 * pad);
+	{
+		region, inside := GetRect.begin_scrollable_region(scroll_region);
+		r := inside;
+		r.y = scroll_region.h + scroll_region.y;
+		r.h = k;
+		r.w = 4 * k;
+		r.y += ui.scroll_value;
 
-	ui.run_star = GetRect.button(r, "Run star", *theme.button_theme);
-	ui.eat_event |= ui.run_star;
-	r.y += k + pad;
+		defer GetRect.end_scrollable_region(region, r.w, r.y, *ui.scroll_value);
 
-	ui.run_closure = GetRect.button(r, "Run closure", *theme.button_theme);
-	ui.eat_event |= ui.run_closure;
-	r.y += k + pad;
+		ui.reset_visible = GetRect.button(r, "Reset", *theme.button_theme);
+		ui.eat_event |= ui.reset_visible;
+		r.y -= k + pad;
 
-	ui.run_link = GetRect.button(r, "Run link", *theme.button_theme);
-	ui.eat_event |= ui.run_link;
-	r.y += k + pad;
+		ui.run_star = GetRect.button(r, "Run star", *theme.button_theme);
+		ui.eat_event |= ui.run_star;
+		r.y -= k + pad;
 
-	ui.run_boundary = GetRect.button(r, "Run boundary", *theme.button_theme);
-	ui.eat_event |= ui.run_boundary;
-	r.y += k + pad;
+		ui.run_closure = GetRect.button(r, "Run closure", *theme.button_theme);
+		ui.eat_event |= ui.run_closure;
+		r.y -= k + pad;
 
-	ui.add_point = GetRect.button(r, "Add point", *theme.button_theme);
-	ui.eat_event |= ui.add_point;
-	r.y += k + pad;
+		ui.run_link = GetRect.button(r, "Run link", *theme.button_theme);
+		ui.eat_event |= ui.run_link;
+		r.y -= k + pad;
 
-	ui.run_cotan = GetRect.button(r, "Cotan", *theme.button_theme);
-	ui.eat_event |= ui.run_cotan;
-	r.y += k + pad;
+		ui.run_boundary = GetRect.button(r, "Run boundary", *theme.button_theme);
+		ui.eat_event |= ui.run_boundary;
+		r.y -= k + pad;
 
-	ui.run_barycentric_dual_area = GetRect.button(r, "Barycenter", *theme.button_theme);
-	ui.eat_event |= ui.run_barycentric_dual_area;
-	r.y += k + pad;
+		ui.add_point = GetRect.button(r, "Add point", *theme.button_theme);
+		ui.eat_event |= ui.add_point;
+		r.y -= k + pad;
 
-	ui.run_hodge0 = GetRect.button(r, "*0", *theme.button_theme);
-	ui.eat_event |= ui.run_hodge0;
-	r.y += k + pad;
+		ui.run_cotan = GetRect.button(r, "Cotan", *theme.button_theme);
+		ui.eat_event |= ui.run_cotan;
+		r.y -= k + pad;
 
-	ui.run_hodge1 = GetRect.button(r, "*1", *theme.button_theme);
-	ui.eat_event |= ui.run_hodge1;
-	r.y += k + pad;
+		ui.run_barycentric_dual_area = GetRect.button(r, "Barycenter", *theme.button_theme);
+		ui.eat_event |= ui.run_barycentric_dual_area;
+		r.y -= k + pad;
 
-	ui.run_hodge2 = GetRect.button(r, "*2", *theme.button_theme);
-	ui.eat_event |= ui.run_hodge2;
-	r.y += k + pad;
+		ui.run_hodge0 = GetRect.button(r, "*0", *theme.button_theme);
+		ui.eat_event |= ui.run_hodge0;
+		r.y -= k + pad;
 
-	ui.run_angle = GetRect.button(r, "Angle", *theme.button_theme);
-	ui.eat_event |= ui.run_angle;
-	r.y += k + pad;
+		ui.run_hodge1 = GetRect.button(r, "*1", *theme.button_theme);
+		ui.eat_event |= ui.run_hodge1;
+		r.y -= k + pad;
 
-	if GetRect.button(r, "Toggle Vertex", *theme.button_theme) {
-		ui.eat_event |= true;
-		ui.show_vertex_interpolated = !ui.show_vertex_interpolated;
+		ui.run_hodge2 = GetRect.button(r, "*2", *theme.button_theme);
+		ui.eat_event |= ui.run_hodge2;
+		r.y -= k + pad;
+
+		ui.run_angle = GetRect.button(r, "Angle", *theme.button_theme);
+		ui.eat_event |= ui.run_angle;
+		r.y -= k + pad;
+
+		ui.run_angle_defect = GetRect.button(r, "Angle Defect", *theme.button_theme);
+		ui.eat_event |= ui.run_angle_defect;
+		r.y -= k + pad;
+		
+		ui.run_next = GetRect.button(r, "Next", *theme.button_theme);
+		ui.eat_event |= ui.run_next;
+		r.y -= k + pad;
+
+		ui.run_twin = GetRect.button(r, "Twin", *theme.button_theme);
+		ui.eat_event |= ui.run_twin;
+		r.y -= k + pad;
+
+		if GetRect.button(r, "Toggle Vertex", *theme.button_theme) {
+			ui.eat_event |= true;
+			ui.show_vertex_interpolated = !ui.show_vertex_interpolated;
+		}
+		r.y -= k + pad;
+
+		if GetRect.button(r, "Toggle Half Edges", *theme.button_theme) {
+			ui.eat_event |= true;
+			ui.show_half_edges = !ui.show_half_edges;
+		}
+		r.y -= k + pad;
+		
+		if GetRect.button(r, "Toggle Normals", *theme.button_theme) {
+			ui.eat_event |= true;
+			ui.show_normals = !ui.show_normals;
+		}
+		r.y -= k + pad;
+		
+		ui.run_normal_angle_weighted = GetRect.button(r, "N phi", *theme.button_theme);
+		ui.eat_event |= ui.run_normal_angle_weighted;
+		r.y -= k + pad;
+
+		ui.run_normal_sphere_inscribed = GetRect.button(r, "N s", *theme.button_theme);
+		ui.eat_event |= ui.run_normal_sphere_inscribed;
+		r.y -= k + pad;
+		
+		ui.run_normal_area_weighted = GetRect.button(r, "N a", *theme.button_theme);
+		ui.eat_event |= ui.run_normal_area_weighted;
+		r.y -= k + pad;
+		
+		ui.run_normal_gaussian_curvature = GetRect.button(r, "KN", *theme.button_theme);
+		ui.eat_event |= ui.run_normal_gaussian_curvature;
+		r.y -= k + pad;
+
+		ui.run_normal_mean_curvature = GetRect.button(r, "HN", *theme.button_theme);
+		ui.eat_event |= ui.run_normal_mean_curvature;
+		r.y -= k + pad;
+
+		r.y -= k + pad;
 	}
-	r.y += k + pad;
+
 
 	GetRect.draw_popups();
 }

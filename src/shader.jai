@@ -39,10 +39,11 @@ Shader :: struct {
 	program  : u32 = 0;
 };
 
-shader_init :: () -> Shader {
+shader_init :: () -> Shader { return shader_init(VERT, FRAG); }
+shader_init :: (vert: string, frag: string) -> Shader {
 	shader : Shader;
 	source : [1] *u8;
-	source[0] = VERT.data;
+	source[0] = vert.data;
 
 	shader.vertex = glCreateShader(GL_VERTEX_SHADER);
 	glShaderSource(shader.vertex, 1, source.data, null);
@@ -61,7 +62,7 @@ shader_init :: () -> Shader {
 		return .{};
 	}
 	
-	source[0] = FRAG.data;
+	source[0] = frag.data;
 	shader.fragment = glCreateShader(GL_FRAGMENT_SHADER);
 	glShaderSource(shader.fragment, 1, source.data, null);
 	glCompileShader(shader.fragment);
@@ -104,4 +105,19 @@ set_uniform :: (using shader: Shader, name: string, mat: Matrix4) {
 	glUseProgram(program);
 	loc := glGetUniformLocation(program, name.data);
 	glUniformMatrix4fv(loc, 1, false, cast(*float) *mat);
+}
+set_uniform :: (using shader: Shader, name: string, mat: Vector3) {
+	glUseProgram(program);
+	loc := glGetUniformLocation(program, name.data);
+	glUniform3fv(loc, 1, cast(*float) *mat);
+}
+set_uniform :: (using shader: Shader, name: string, value: bool) {
+	glUseProgram(program);
+	loc := glGetUniformLocation(program, name.data);
+	glUniform1ui(loc, xx (ifx value then 1 else 0));
+}
+set_uniform :: (using shader: Shader, name: string, value: float) {
+	glUseProgram(program);
+	loc := glGetUniformLocation(program, name.data);
+	glUniform1f(loc, value);
 }
