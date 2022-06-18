@@ -85,6 +85,7 @@ Ui_State :: struct {
 	run_hodge0 := false;
 	run_hodge1 := false;
 	run_hodge2 := false;
+	run_angle := false;
 };
 
 window_state : Window_State;
@@ -302,6 +303,24 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		ui.show_vertex_interpolated = false;
 	}
 
+	if ui.run_angle {
+		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
+		ns := NewArray(scene.mesh.nvert, float, allocator=temp);
+		for * ns { <<it = 0; }
+
+		for scene.half_mesh.half_edges {
+			a := Geometry.angle(it_index, scene.half_mesh, scene.mesh);
+
+			v := it.vertex;
+			ts[v] += a;
+			ns[v] += 1;
+		}
+
+		max_t : float = 3.1415926;
+		for * scene.mesh.vertex_colors { <<it = Color.map(ts[it_index] / (ns[it_index] * max_t)); }
+		ui.show_vertex_interpolated = true;
+	}
+
 	update_ray_picking(scene, ui);
 
 	for * scene.mesh.vertex_visible {
@@ -475,6 +494,10 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 
 	ui.run_hodge2 = GetRect.button(r, "*2", *theme.button_theme);
 	ui.eat_event |= ui.run_hodge2;
+	r.y += k + pad;
+
+	ui.run_angle = GetRect.button(r, "Angle", *theme.button_theme);
+	ui.eat_event |= ui.run_angle;
 	r.y += k + pad;
 
 	if GetRect.button(r, "Toggle Vertex", *theme.button_theme) {

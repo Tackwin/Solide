@@ -145,3 +145,74 @@ angle :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	return atan2(sin, cos);
 }
 
+dihedral_angle :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	he := half_mesh.half_edges[half_edge];
+
+	eij := mesh.vertices[he.vertex] - mesh.vertices[half_mesh.half_edges[he.next].vertex];
+	eij := normalize(eij);
+
+	face_a := he.face;
+	face_b := half_mesh.half_edges[he.twin].face;
+
+	na := normal(face_a, mesh);
+	nb := normal(face_b, mesh);
+
+	return atan2(dot(eij, cross(na, nb)), dot(na, nb));
+}
+
+vertex_normal_angle_weighted :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> Vector3 {
+	N : Vector3 = .{0, 0, 0};
+
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
+		phi := angle(it.out_half_edge, half_mesh, mesh);
+		Nijk := normal(it.face, mesh);
+		N += phi * Nijk;
+	}
+
+	return normalize(N);
+}
+
+vertex_normal_sphere_inscribed :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> Vector3 {
+	N : Vector3 = .{0, 0, 0};
+
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
+		i, j  := end_points(half_mesh.half_edges[it.out_half_edge], half_mesh, mesh);
+		k, ii := end_points(half_mesh.half_edges[it.in_half_edge], half_mesh, mesh);
+		assert(i == ii);
+
+		add := cross(j - i, k - i);
+		N += add / (length_squared(j - i) * length_squared(k - i));
+	}
+
+	return normalize(N);
+}
+
+vertex_normal_area_weighted :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> Vector3 {
+	N : Vector3 = .{0, 0, 0};
+	
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh)
+		N += normal(it.face, mesh) * area(it.face, mesh);
+
+	return normalize(N);
+}
+
+vertex_normal_gaussian_curvature :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> Vector3 {
+	N : Vector3 = .{0, 0, 0};
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
+		i, j := end_points(half_mesh.half_edges[it.out_half_edge], half_mesh, mesh);
+		N += dihedral_angle(it.out_half_edge, half_mesh, mesh) * normalize(j - i);
+	}
+	return normalize(N);
+}
+
+vertex_normal_mean_curvature :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> Vector3 {
+	N : Vector3 = .{0, 0, 0};
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
+		a := cotan(it.out_half_edge, half_mesh, mesh);
+		b := cotan(half_mesh.half_edges[it.in_half_edge].twin, half_mesh, mesh);
+		i, j := end_points(half_mesh.half_edges[it.out_half_edge], half_mesh, mesh);
+
+		N += (a + b) * (j - i);
+	}
+	return normalize(N);
+}

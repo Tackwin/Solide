@@ -144,7 +144,8 @@ load_mesh :: (file: string) -> Mesh {
 		else if scan2(line, "f % % %", *f.x, *f.y, *f.z) array_add(*mesh.faces, f);
 		else if scan2(line, "f %/% %/% %/%", *f.x, *ft.x, *f.y, *ft.y, *f.z, *ft.z)
 			array_add(*mesh.faces, f);
-		else if scan2(line, "f %/%/% %/%/% %/%/%", *f.x, *ft.x, *fn.x, *f.y, *ft.y, *fn.y, *f.z, *ft.z, *fn.z) mesh.nface += 1;
+		else if scan2(line, "f %/%/% %/%/% %/%/%", *f.x, *ft.x, *fn.x, *f.y, *ft.y, *fn.y, *f.z, *ft.z, *fn.z)
+			array_add(*mesh.faces, f);
 	}
 	for * mesh.faces {
 		it.x -= 1;
@@ -553,6 +554,26 @@ build_vector_list :: (mesh: Mesh, vertices: ..u32) -> [..] float {
 	return v;
 }
 
+normal :: (face: int, mesh: Mesh) -> Vector3 {
+	a := mesh.vertices[mesh.faces[face].x];
+	b := mesh.vertices[mesh.faces[face].y];
+	c := mesh.vertices[mesh.faces[face].z];
+
+	return normalized(cross(b - a), cross(c - a));
+}
+
+area :: (face: int, mesh: Mesh) -> float {
+	i := mesh.vertices[mesh.faces[face].x];
+	j := mesh.vertices[mesh.faces[face].y];
+	k := mesh.vertices[mesh.faces[face].z];
+
+	lij := length(j - i);
+	ljk := length(k - j);
+	lki := length(i - k);
+
+	s := (lij + ljk + lki) / 2;
+	return sqrt(s * (s - lij) * (s - ljk) * (s - lki));
+}
 
 cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	curr := half_mesh.half_edges[half_edge];
@@ -569,35 +590,9 @@ cotan :: (half_edge: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	return cos / sin;
 }
 
-barycentric_dual_area :: (half_vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+barycentric_dual_area :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	sum := 0.0;
-
-	orig := half_mesh.vertices[half_vertex];
-	edge := orig;
-	
-	while true {
-
-		a := half_mesh.half_edges[edge].vertex;
-		edge = half_mesh.half_edges[edge].next;
-		b := half_mesh.half_edges[edge].vertex;
-		edge = half_mesh.half_edges[edge].next;
-		c := half_mesh.half_edges[edge].vertex;
-		edge = half_mesh.half_edges[edge].twin;
-
-		i := mesh.vertices[a];
-		j := mesh.vertices[b];
-		k := mesh.vertices[c];
-
-		lij := length(j - i);
-		ljk := length(k - j);
-		lki := length(i - k);
-
-		s := (lij + ljk + lki) / 2;
-		sum += sqrt(s * (s - lij) * (s - ljk) * (s - lki));
-
-		if edge == orig break;
-	}
-
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) sum += area(it.face, mesh);
 	return sum / 3;
 }
 
@@ -737,4 +732,64 @@ build_d1 :: (mesh: *Mesh) -> MKL.Sparse_Matrix {
 	}
 
 	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
+}
+
+end_points :: (half_edge: Half_Edge, half_mesh: Half_Mesh, mesh: Mesh) -> (Vector3, Vector3) {
+	a := mesh.vertices[half_edge.vertex];
+	b := mesh.vertices[half_mesh.half_edges[half_edge.next].vertex];
+	return (a, b);
+}
+
+Iterate_Adjacent_Faces :: struct {
+	vertex: int = -1;
+	half_mesh: *Half_Mesh;
+	mesh: *Mesh;
+};
+
+Vertex_Incident_Face :: struct {
+	face: int = -1;
+	vertex: int = -1;
+	out\    _half_edge: int = -1;
+	in\     _half_edge: int = -1;
+	opposite_half_edge: int = -1;
+};
+
+iterate_adjacent_faces ::
+	(vertex: int, half_mesh: *Half_Mesh, mesh: *Mesh) -> Iterate_Adjacent_Faces
+{
+	ret : Iterate_Adjacent_Faces = ---;
+	ret.vertex = vertex;
+	ret.half_mesh = half_mesh;
+	ret.mesh = mesh;
+	return ret;
+}
+
+for_expansion :: (iterator: Iterate_Adjacent_Faces, body: Code, flags: For_Flags) #expand {
+	orig := iterator.half_mesh.vertices[iterator.vertex];
+	edge := orig;
+	
+	count := 0;
+	while true {
+		current : Vertex_Incident_Face;
+		current.vertex = iterator.vertex;
+		current.face = iterator.half_mesh.half_edges[edge].face;
+
+		current.out_half_edge = edge;
+		edge = iterator.half_mesh.half_edges[edge].next;
+
+		current.opposite_half_edge = edge;
+		edge = iterator.half_mesh.half_edges[edge].next;
+
+		current.in_half_edge = edge;
+		edge = iterator.half_mesh.half_edges[edge].twin;
+
+		`it := current;
+		`it_index := count;
+
+		#insert body;
+		
+		count += 1;
+
+		if edge == orig break;
+	}
 }
