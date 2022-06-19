@@ -47,8 +47,7 @@ void main() {
 	frag_color = color;
 
 	vec3 local_pos = pos;
-
-	if (pos.x > 0 && pos.x < 1) {
+	if (0 < pos.x && pos.x < 1) {
 		local_pos.x = tip_ratio;
 	}
 

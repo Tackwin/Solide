@@ -123,7 +123,7 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("bob.obj");
+	scene.mesh   = load_mesh("spot.obj");
 	scene.half_mesh = construct_half_mesh(scene.mesh);
 	build_matrices(scene.half_mesh, *scene.mesh);
 
@@ -203,7 +203,7 @@ main :: () {
 }
 
 update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
-
+	T += dt;
 	scene.camera.target = .{ 0, 0, 0 };
 	
 	if scene.selected_point >= 0 {
@@ -517,6 +517,22 @@ update_ray_picking :: (scene: *Scene_State, ui: *Ui_State) {
 	}
 }
 
+samples :: #run -> [] Render.Arrow {
+	vec : [2000] Render.Arrow;
+	for 0..vec.count-1 {
+		vec[it].a = .{0, 0, 0};
+		vec[it].b = make_vector3(
+			random_get_zero_to_one() * 2 - 1, -1 + 2 * random_get_zero_to_one(), random_get_zero_to_one() * 2 - 1
+		);
+		vec[it].color = vec[it].b;
+		vec[it].b = (0.1 + random_get_zero_to_one() * 0.9) *normalize(vec[it].b);
+		vec[it].r = random_get_zero_to_one() * 0.05 + 0.05;
+	}
+	return vec;
+};
+
+T := 0.0;
+
 render :: (scene: *Scene_State, ui: *Ui_State) {
 	glClearColor(.15, .08, .08, 1);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -563,6 +579,7 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 		}
 		Render.arrows(instances, proj * view, tip_ratio=0.1);
 	}
+	// Render.arrows(samples, proj * view, tip_ratio= 0.8 * sin(T) * sin(T) + 0.1);
 
 	render_ui(scene, ui);
 

@@ -189,7 +189,7 @@ vertex_normal_sphere_inscribed :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh
 
 vertex_normal_area_weighted :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> Vector3 {
 	N : Vector3 = .{0, 0, 0};
-	
+
 	for iterate_adjacent_faces(vertex, *half_mesh, *mesh)
 		N += normal(it.face, mesh) * area(it.face, mesh);
 
@@ -223,4 +223,13 @@ angle_defect :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 		sum -= angle(it.out_half_edge, half_mesh, mesh);
 	}
 	return sum;
+}
+
+scalar_mean_curvature :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	sum := 0.0;
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
+		i, j := end_points(half_mesh.half_edges[it.out_half_edge], half_mesh, mesh);
+		sum += angle(it.out_half_edge, half_mesh, mesh) * length(j - i);
+	}
+	return sum /= 2;
 }
