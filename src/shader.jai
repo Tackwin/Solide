@@ -9,11 +9,18 @@
 FRAG :: #string FRAG
 #version 410 core
 layout (location = 0) in vec3 color;
+layout (location = 1) in vec3 normal;
+layout (location = 2) in vec4 pos;
 
 out vec4 frag_color;
 
+vec3 light_pos = vec3(10, 10, 10);
+
 void main() {
-	frag_color = vec4(color, 1.0);
+	vec3 light_dir = normalize(light_pos - pos.xyz);
+	float diff = max(dot(normal, light_dir), 0.2);
+
+	frag_color = vec4(diff * color, 1.0);
 }
 FRAG
 
@@ -21,15 +28,21 @@ VERT :: #string VERT
 #version 410 core
 layout (location = 0) in vec3 pos;
 layout (location = 1) in vec3 color;
+layout (location = 2) in vec3 normal;
 
+uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 
 layout (location = 0) out vec3 frag_color;
+layout (location = 1) out vec3 frag_normal;
+layout (location = 2) out vec4 frag_pos;
 
 void main() {
 	frag_color = color;
-	gl_Position = vec4(pos, 1.0) * view * projection;
+	frag_pos = vec4(pos, 1.0) * model;
+	frag_normal = (vec4(normal, 0.0) * model).xyz;
+	gl_Position = frag_pos * view * projection;
 }
 VERT
 

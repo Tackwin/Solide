@@ -54,6 +54,7 @@ Scene_State :: struct {
 	d_down : bool = false;
 	q_down : bool = false;
 
+	model_matrix : Matrix4 = Matrix4_Identity;
 	shader : Shader;
 	mesh   : Mesh;
 	half_mesh : Half_Mesh;
@@ -71,6 +72,9 @@ Scene_State :: struct {
 
 	vertex_normals : [] Vector3;
 	heat : [] float;
+
+	unit_vector_rotating_time := 0.0;
+	scale_factor := 1.0;
 };
 
 Ui_State :: struct {
@@ -78,9 +82,15 @@ Ui_State :: struct {
 	scroll_value := 0.0;
 
 	reset_visible := false;
+	reset_normals := false;
 	show_vertex_interpolated := false;
 	show_half_edges := false;
 	show_normals := false;
+
+	scale_up := false;
+	scale_down := false;
+
+	toggle_rotation := true;
 
 	add_point := false;
 	run_star := false;
@@ -241,6 +251,33 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	
 	scene.camera.pos.x = scene.camera.target.x + cos(theta) * l;
 	scene.camera.pos.y = scene.camera.target.y + sin(theta) * l;
+
+	if (ui.toggle_rotation) {
+		scene.unit_vector_rotating_time += dt;
+		x := cos(2 * PI * scene.unit_vector_rotating_time / 10 + 0 * PI / 3);
+		y := cos(2 * PI * scene.unit_vector_rotating_time / 10 + 2 * PI / 3);
+		z := cos(2 * PI * scene.unit_vector_rotating_time / 10 + 4 * PI / 3);
+
+		scene.model_matrix = look_at_matrix(.{0, 0, 0}, normalize(make_vector3(x, y, z)));
+		scene.model_matrix._11 *= scene.scale_factor;
+		scene.model_matrix._12 *= scene.scale_factor;
+		scene.model_matrix._13 *= scene.scale_factor;
+		scene.model_matrix._21 *= scene.scale_factor;
+		scene.model_matrix._22 *= scene.scale_factor;
+		scene.model_matrix._23 *= scene.scale_factor;
+		scene.model_matrix._31 *= scene.scale_factor;
+		scene.model_matrix._32 *= scene.scale_factor;
+		scene.model_matrix._33 *= scene.scale_factor;
+	}
+
+	if ui.scale_up {
+		f := 1.5;
+		scene.scale_factor *= f;
+	}
+	if ui.scale_down {
+		f := 1.5;
+		scene.scale_factor /= f;
+	}
 
 	if ui.reset_visible Geometry.clear(scene.selected_simplicial);
 
@@ -508,8 +545,8 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 			for scene.heat scene.heat[it_index] -= dt[it_index] * 0.01;
 		}
 
-		min_t := +FLOAT32_MAX;
-		max_t := -FLOAT32_MAX;
+		min_t := -1.0;
+		max_t := +1.0;
 		for scene.heat {
 			max_t = max(max_t, it);
 			min_t = min(min_t, it);
@@ -518,6 +555,10 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		for scene.heat
 			scene.mesh.vertex_colors[it_index] = Color.map((it - min_t) / (max_t - min_t), Color.Seismic_Color_Map);
 		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.reset_normals {
+		scene.vertex_normals.count = 0;
 	}
 
 	update_ray_picking(scene, ui);
@@ -539,7 +580,7 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		t := scene.mesh.face_colors;
 		scene.mesh.face_colors.data = temp_colors.data;
 		defer scene.mesh.face_colors.data = t.data;
-		update_gpu_data(*scene.mesh, ui.show_vertex_interpolated);
+		update_gpu_data(*scene.mesh, ui.show_vertex_interpolated, scene.vertex_normals);
 	}
 }
 
@@ -560,10 +601,15 @@ update_ray_picking :: (scene: *Scene_State, ui: *Ui_State) {
 	edg_idx := -1;
 	ver_idx := -1;
 
+	transformed_vertices := NewArray(scene.mesh.vertices.count, Vector3, allocator=temp);
+	for * transformed_vertices {
+		<<it = (scene.model_matrix * make_vector4(scene.mesh.vertices[it_index], 1.0)).xyz;
+	}
+
 	for scene.mesh.faces {
-		tri.a = scene.mesh.vertices[it.x];
-		tri.b = scene.mesh.vertices[it.y];
-		tri.c = scene.mesh.vertices[it.z];
+		tri.a = transformed_vertices[it.x];
+		tri.b = transformed_vertices[it.y];
+		tri.c = transformed_vertices[it.z];
 
 		t, hit := Collision.triangle_ray_t(tri, ray);
 		if hit && t_tri > t {
@@ -572,8 +618,8 @@ update_ray_picking :: (scene: *Scene_State, ui: *Ui_State) {
 		}
 	}
 	for scene.mesh.edges {
-		cap.a = scene.mesh.vertices[it.a];
-		cap.b = scene.mesh.vertices[it.b];
+		cap.a = transformed_vertices[it.a];
+		cap.b = transformed_vertices[it.b];
 
 		t, hit := Collision.capsule_ray_t(cap, ray);
 		if hit && t_cap > t {
@@ -581,7 +627,7 @@ update_ray_picking :: (scene: *Scene_State, ui: *Ui_State) {
 			edg_idx = it_index;
 		}
 	}
-	for scene.mesh.vertices {
+	for transformed_vertices {
 		sph.p = it;
 
 		t, hit := Collision.sphere_ray_t(sph, ray);
@@ -633,7 +679,7 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 	set_uniform(scene.shader, "view", view);
 	set_uniform(scene.shader, "projection", proj);
 
-	render(scene.mesh, scene.shader);
+	render(scene.mesh, scene.shader, scene);
 
 	if ui.show_half_edges {
 		instances := NewArray(scene.half_mesh.half_edges.count, Render.Arrow, allocator=temp);
@@ -646,9 +692,9 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 			a = c + (a - c) * 0.9;
 			b = c + (b - c) * 0.9;
 
-			instances[it_index].a = a;
-			instances[it_index].b = b;
-			instances[it_index].r = area(it.face, scene.mesh);
+			instances[it_index].a = (scene.model_matrix * make_vector4(a, 1.0)).xyz;
+			instances[it_index].b = (scene.model_matrix * make_vector4(b, 1.0)).xyz;
+			instances[it_index].r = area(it.face, scene.mesh) * scene.scale_factor;
 			instances[it_index].color = .{1, 1, 1};
 		}
 		Render.arrows(instances, proj * view, tip_ratio=0.3);
@@ -659,8 +705,8 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 			a := scene.mesh.vertices[it_index];
 			b := a + it * 0.025;
 
-			instances[it_index].a = a;
-			instances[it_index].b = b;
+			instances[it_index].a = (scene.model_matrix * make_vector4(a, 1.0)).xyz;
+			instances[it_index].b = (scene.model_matrix * make_vector4(b, 1.0)).xyz;
 			instances[it_index].r = 0.002;
 			instances[it_index].color = .{1, 1, 1};
 		}
@@ -673,8 +719,9 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 	Simp.swap_buffers(window_state.handle);
 }
 
-render :: (mesh: Mesh, shader: Shader) {
+render :: (mesh: Mesh, shader: Shader, scene: *Scene_State) {
 	glUseProgram(shader.program);
+	set_uniform(shader, "model", scene.model_matrix);
 	glBindVertexArray(mesh.vao);
 	glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
 	glDrawArrays(GL_TRIANGLES, xx 0, xx mesh.cpu_buffer.count);
@@ -822,6 +869,23 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 		toggle_heat_iteration := GetRect.button(r, "Heat", *theme.button_theme);
 		if toggle_heat_iteration ui.run_heat_iteration ^= true;
 		ui.eat_event |= toggle_heat_iteration;
+		r.y -= k + pad;
+
+		toggle_rotation := GetRect.button(r, "Rotate", *theme.button_theme);
+		if toggle_rotation ui.toggle_rotation ^= true;
+		ui.eat_event |= toggle_rotation;
+		r.y -= k + pad;
+
+		ui.reset_normals = GetRect.button(r, "Reset normals", *theme.button_theme);
+		ui.eat_event |= ui.reset_normals;
+		r.y -= k + pad;
+
+		ui.scale_up = GetRect.button(r, "Scale up", *theme.button_theme);
+		ui.eat_event |= ui.scale_up;
+		r.y -= k + pad;
+
+		ui.scale_down = GetRect.button(r, "Scale down", *theme.button_theme);
+		ui.eat_event |= ui.scale_down;
 		r.y -= k + pad;
 
 		r.y -= k + pad;

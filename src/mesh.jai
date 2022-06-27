@@ -64,8 +64,9 @@ Mesh :: struct {
 	laplace : MKL.Sparse_Matrix;
 
 	Vertex :: struct {
-		pos   : Vector3;
-		color : Vector3;
+		pos    : Vector3;
+		color  : Vector3;
+		normal : Vector3;
 	};
 
 	cpu_buffer : [..] Vertex;
@@ -211,13 +212,15 @@ load_mesh :: (file: string) -> Mesh {
 	glGenBuffers(1, *mesh.vbo);
 	glGenBuffers(1, *mesh.ebo);
 
-	update_gpu_data(*mesh, false);
+	update_gpu_data(*mesh, false, .[]);
 
 	glBindVertexArray(mesh.vao);
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, size_of(Mesh.Vertex), xx 0);
 	glEnableVertexAttribArray(1);
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, size_of(Mesh.Vertex), xx 12);
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, size_of(Mesh.Vertex), xx 24);
 
 	return mesh;
 }
@@ -292,6 +295,7 @@ construct_half_mesh :: (mesh: Mesh) -> Half_Mesh {
 
 	for mesh.edges {
 		idx, found := table_find(edge_table, map(it.a, it.b));
+		if (!found) idx, found = table_find(edge_table, map(it.b, it.a));
 		assert(found);
 
 		half_mesh.edges[it_index] = idx;
@@ -335,27 +339,43 @@ build_matrices :: (half_mesh: Half_Mesh, mesh: *Mesh) {
 	mesh.laplace = build_laplace(half_mesh, mesh);
 }
 
-update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
+update_gpu_data :: (
+	mesh: *Mesh,
+	interpolate_vertex_color: bool,
+	normals: [] Vector3
+) {
 	mesh.cpu_buffer.count = 0;
-	make_vertex :: (p : Vector3, c : Vector3) -> Mesh.Vertex {
+	make_vertex :: (p : Vector3, c : Vector3, n: Vector3) -> Mesh.Vertex {
 		v : Mesh.Vertex = ---;
 		v.pos = p;
 		v.color = c;
+		v.normal = n;
 		return v;
 	}
-	push_vertex :: (p : Vector3, c : Vector3, buffer : *[..] Mesh.Vertex) #expand {
-		array_add(buffer, make_vertex(p, c));
+	push_vertex :: (p : Vector3, c : Vector3, n: Vector3, buffer : *[..] Mesh.Vertex) #expand {
+		array_add(buffer, make_vertex(p, c, n));
 	}
 
 	for mesh.faces if mesh.face_visible[it_index] {
+		a := mesh.vertices[it.x];
+		b := mesh.vertices[it.y];
+		c := mesh.vertices[it.z];
+		
+		normala := normalize(cross(b - a, c - a));
+		normalb := normalize(cross(b - a, c - a));
+		normalc := normalize(cross(b - a, c - a));
+		if (it.x < normals.count) normala = normals[it.x];
+		if (it.y < normals.count) normalb = normals[it.y];
+		if (it.z < normals.count) normalc = normals[it.z];
+
 		if interpolate_vertex_color {
-			push_vertex(mesh.vertices[it.x], mesh.vertex_colors[it.x], *mesh.cpu_buffer);
-			push_vertex(mesh.vertices[it.y], mesh.vertex_colors[it.y], *mesh.cpu_buffer);
-			push_vertex(mesh.vertices[it.z], mesh.vertex_colors[it.z], *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.x], mesh.vertex_colors[it.x], normala, *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.y], mesh.vertex_colors[it.y], normalb, *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.z], mesh.vertex_colors[it.z], normalc, *mesh.cpu_buffer);
 		} else {
-			push_vertex(mesh.vertices[it.x], mesh.face_colors[it_index], *mesh.cpu_buffer);
-			push_vertex(mesh.vertices[it.y], mesh.face_colors[it_index], *mesh.cpu_buffer);
-			push_vertex(mesh.vertices[it.z], mesh.face_colors[it_index], *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.x], mesh.face_colors[it_index], normala, *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.y], mesh.face_colors[it_index], normalb, *mesh.cpu_buffer);
+			push_vertex(mesh.vertices[it.z], mesh.face_colors[it_index], normalc, *mesh.cpu_buffer);
 		}
 	}
 
@@ -366,7 +386,7 @@ update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
 		V_ANGLE : float : #run atan(0.5);
 
 		vertices : [12] Mesh.Vertex;
-		vertices[0] = make_vertex(p + Vector3.{0, 0, R}, c);
+		vertices[0] = make_vertex(p + Vector3.{0, 0, R}, c, .{0, 0, 1});
 
 		hAngle1 : float = -PI / 2 - H_ANGLE / 2;
 		hAngle2 : float = -PI / 2;
@@ -387,14 +407,14 @@ update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
 			v2.y = xy * sin(hAngle2);
 			v2.z = -z;
 
-			vertices[i1] = make_vertex(v1 + p, c);
-			vertices[i2] = make_vertex(v2 + p, c);
+			vertices[i1] = make_vertex(v1 + p, c, normalize(v1));
+			vertices[i2] = make_vertex(v2 + p, c, normalize(v2));
 
 			hAngle1 += H_ANGLE;
 			hAngle2 += H_ANGLE;
 		}
 
-		vertices[11] = make_vertex(p + Vector3.{0, 0, -R}, c);
+		vertices[11] = make_vertex(p + Vector3.{0, 0, -R}, c, .{0, 0, -1});
 
 		for 0..4 {
 			array_add(buffer, vertices[0]);
@@ -443,31 +463,42 @@ update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
 		for * vertices { <<it = mat * <<it; }
 		for * vertices { <<it += (a + b) / 2; }
 
-		push_vertex(vertices[0 + 0], c, buffer);
-		push_vertex(vertices[0 + 1], c, buffer);
-		push_vertex(vertices[0 + 2], c, buffer);
-		
-		push_vertex(vertices[0 + 1], c, buffer);
-		push_vertex(vertices[0 + 2], c, buffer);
-		push_vertex(vertices[0 + 3], c, buffer);
-		
+		push_vertex(vertices[0 + 0], c, normalize(vertices[0 + 0]), buffer);
+		push_vertex(vertices[0 + 1], c, normalize(vertices[0 + 1]), buffer);
+		push_vertex(vertices[0 + 2], c, normalize(vertices[0 + 2]), buffer);
 
-		push_vertex(vertices[4 + 0], c, buffer);
-		push_vertex(vertices[4 + 1], c, buffer);
-		push_vertex(vertices[4 + 2], c, buffer);
+		push_vertex(vertices[0 + 1], c, normalize(vertices[0 + 1]), buffer);
+		push_vertex(vertices[0 + 2], c, normalize(vertices[0 + 2]), buffer);
+		push_vertex(vertices[0 + 3], c, normalize(vertices[0 + 3]), buffer);
 
-		push_vertex(vertices[4 + 1], c, buffer);
-		push_vertex(vertices[4 + 2], c, buffer);
-		push_vertex(vertices[4 + 3], c, buffer);
+
+		push_vertex(vertices[4 + 0], c, normalize(vertices[4 + 0]), buffer);
+		push_vertex(vertices[4 + 1], c, normalize(vertices[4 + 1]), buffer);
+		push_vertex(vertices[4 + 2], c, normalize(vertices[4 + 2]), buffer);
+
+		push_vertex(vertices[4 + 1], c, normalize(vertices[4 + 1]), buffer);
+		push_vertex(vertices[4 + 2], c, normalize(vertices[4 + 2]), buffer);
+		push_vertex(vertices[4 + 3], c, normalize(vertices[4 + 3]), buffer);
 
 		for 0..3 {
-			push_vertex(vertices[0 + (0 + it) % 4], c, buffer);
-			push_vertex(vertices[4 + (0 + it) % 4], c, buffer);
-			push_vertex(vertices[4 + (1 + it) % 4], c, buffer);
-			
-			push_vertex(vertices[0 + (0 + it) % 4], c, buffer);
-			push_vertex(vertices[4 + (1 + it) % 4], c, buffer);
-			push_vertex(vertices[0 + (1 + it) % 4], c, buffer);
+			push_vertex(
+				vertices[0 + (0 + it) % 4], c, normalize(vertices[0 + (0 + it) % 4]), buffer
+			);
+			push_vertex(
+				vertices[4 + (0 + it) % 4], c, normalize(vertices[4 + (0 + it) % 4]), buffer
+			);
+			push_vertex(
+				vertices[4 + (1 + it) % 4], c, normalize(vertices[4 + (1 + it) % 4]), buffer
+			);
+			push_vertex(
+				vertices[0 + (0 + it) % 4], c, normalize(vertices[0 + (0 + it) % 4]), buffer
+			);
+			push_vertex(
+				vertices[4 + (1 + it) % 4], c, normalize(vertices[4 + (1 + it) % 4]), buffer
+			);
+			push_vertex(
+				vertices[0 + (1 + it) % 4], c, normalize(vertices[0 + (1 + it) % 4]), buffer
+			);
 		}
 	}
 
@@ -641,10 +672,12 @@ build_hodge_star_1 :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 	for * rows_start { <<it = it_index; }
 	for * col_idx    { <<it = it_index; }
 	for * values {
-		a := cotan(half_mesh.edges[it_index], half_mesh, mesh);
-		b := cotan(half_mesh.half_edges[half_mesh.edges[it_index]].twin, half_mesh, mesh);
+		s := 0.0;
+		s += cotan(half_mesh.edges[it_index], half_mesh, mesh);
+		if (half_mesh.half_edges[half_mesh.edges[it_index]].twin >= 0)
+			s += cotan(half_mesh.half_edges[half_mesh.edges[it_index]].twin, half_mesh, mesh);
 
-		<<it = (a + b) / 2;
+		<<it = s / 2;
 	}
 
 	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
@@ -766,7 +799,8 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 		for iterate_adjacent_faces(i, *half_mesh, *mesh) {
 			uj := 0.0;
 			uj += cotan(it.out_half_edge, half_mesh, mesh);
-			uj += cotan(half_mesh.half_edges[it.out_half_edge].twin, half_mesh, mesh);
+			if half_mesh.half_edges[it.out_half_edge].twin >= 0
+				uj += cotan(half_mesh.half_edges[it.out_half_edge].twin, half_mesh, mesh);
 			uj /= 2;
 
 			j := tip(it.out_half_edge, half_mesh);
@@ -831,6 +865,9 @@ for_expansion :: (iterator: Iterate_Adjacent_Faces, body: Code, flags: For_Flags
 	orig := iterator.half_mesh.vertices[iterator.vertex];
 	edge := orig;
 	
+	`it : Vertex_Incident_Face;
+	`it_index := 0;
+
 	count := 0;
 	while true {
 		current : Vertex_Incident_Face;
@@ -846,13 +883,37 @@ for_expansion :: (iterator: Iterate_Adjacent_Faces, body: Code, flags: For_Flags
 		current.in_half_edge = edge;
 		edge = iterator.half_mesh.half_edges[edge].twin;
 
-		`it := current;
-		`it_index := count;
+		it = current;
+		it_index = count;
 
 		#insert body;
 		
 		count += 1;
+		if edge == orig || edge < 0 return;
+	}
 
-		if edge == orig break;
+	// If we come here then that means that we are at a boundary and we need to loop to the other
+	// side of the first edge so we count every adjacent faces.
+	orig = iterator.half_mesh.half_edges[orig].twin;
+	edge = orig;
+	while true {
+		current : Vertex_Incident_Face;
+		current.vertex = iterator.vertex;
+		current.face = iterator.half_mesh.half_edges[edge].face;
+		
+		current.in_half_edge = edge;
+		edge = iterator.half_mesh.half_edges[edge].next;
+
+		current.out_half_edge = edge;
+		current.opposite_half_edge = iterator.half_mesh.half_edges[edge].next;
+		edge = iterator.half_mesh.half_edges[edge].twin;
+
+		it = current;
+		it_index = count;
+
+		#insert body;
+		
+		count += 1;
+		if edge == orig || edge < 0 return;
 	}
 }
