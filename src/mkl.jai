@@ -45,10 +45,25 @@ create_sparse_matrix :: (
 }
 
 free :: (mat: Sparse_Matrix) {
-	free(mat.rows_start.data);
-	free(mat.col_idx.data);
-	free(mat.values.data);
+	if (mat.user_created) {
+		free(mat.rows_start.data);
+		free(mat.col_idx.data);
+		free(mat.values.data);
+	}
 	mkl_sparse_destroy(mat.mat);
+}
+
+
+copy :: (this: Sparse_Matrix) -> Sparse_Matrix {
+	desc : matrix_descr;
+	desc.type = .GENERAL;
+
+	out: Sparse_Matrix;
+	out.user_created = false;
+
+	status := mkl_sparse_copy(this.mat, desc, *out.mat);
+	assert(status == .SUCCESS);
+	return out;
 }
 
 operator * :: (a: Sparse_Matrix, b: Sparse_Matrix) -> Sparse_Matrix {
@@ -57,7 +72,8 @@ operator * :: (a: Sparse_Matrix, b: Sparse_Matrix) -> Sparse_Matrix {
 	desc : matrix_descr;
 	desc.type = .GENERAL;
 
-	status := mkl_sparse_sp2m(.TRANSPOSE, desc, a.mat, .TRANSPOSE, desc, b.mat, .FULL_MULT, *c.mat);
+	status := mkl_sparse_sp2m(.NON_TRANSPOSE, desc, a.mat, .NON_TRANSPOSE, desc, b.mat, .FULL_MULT, *c.mat);
+	assert(status == .SUCCESS);
 	return c;
 }
 
@@ -107,4 +123,13 @@ print :: (A: Sparse_Matrix) {
 		}
 		print("\n");
 	}
+}
+
+solve :: (A: Sparse_Matrix, b: [] float) -> [] float {
+	x := NewArray(b.count, float);
+	desc : matrix_descr;
+	desc.type = .GENERAL;
+	status := mkl_sparse_s_symgs(.NON_TRANSPOSE, A.mat, desc, 1, b.data, x.data);
+	assert(status == .SUCCESS);
+	return x;
 }

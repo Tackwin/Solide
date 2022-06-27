@@ -61,7 +61,6 @@ Scene_State :: struct {
 	selected_simplicial : Geometry.Simplicial_Complex;
 	selected_half_edge := -1;
 
-	selected_point : s64 = -1;
 	hover_vertex : s64 = -1;
 	hover_edge : s64 = -1;
 	hover_face : s64 = -1;
@@ -71,6 +70,7 @@ Scene_State :: struct {
 	camera: Camera;
 
 	vertex_normals : [] Vector3;
+	heat : [] float;
 };
 
 Ui_State :: struct {
@@ -101,11 +101,39 @@ Ui_State :: struct {
 	run_normal_area_weighted := false;
 	run_normal_gaussian_curvature := false;
 	run_normal_mean_curvature := false;
+	run_minimal_curvature := false;
+	run_maximal_curvature := false;
+	run_laplace := false;
+	run_heat_iteration := false;
+
+	popup_load_mesh := false;
+	load_input := "<path to your obj>";
 };
 
 window_state : Window_State;
 simp_state : Simp_State;
 
+load :: (path: string, scene: *Scene_State) {
+	free(scene.mesh);
+	free(scene.half_mesh);
+	array_free(scene.vertex_normals);
+	array_free(scene.heat);
+	
+	scene.mesh   = load_mesh(path);
+	scene.half_mesh = construct_half_mesh(scene.mesh);
+	build_matrices(scene.half_mesh, *scene.mesh);
+
+	// init Simplicial.
+	array_resize(*scene.selected_simplicial.vertices, scene.mesh.vertices.count);
+	array_resize(*scene.selected_simplicial.edges, scene.mesh.edges.count);
+	array_resize(*scene.selected_simplicial.faces, scene.mesh.faces.count);
+	for * scene.selected_simplicial.vertices { <<it = 0; }
+	for * scene.selected_simplicial.edges { <<it = 0; }
+	for * scene.selected_simplicial.faces { <<it = 0; }
+
+	scene.heat = NewArray(scene.mesh.nvert, float);
+	for * scene.heat { <<it = 0; };
+}
 
 main :: () {
 	#if OS == .WINDOWS {
@@ -123,17 +151,7 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	scene.mesh   = load_mesh("spot.obj");
-	scene.half_mesh = construct_half_mesh(scene.mesh);
-	build_matrices(scene.half_mesh, *scene.mesh);
-
-	// init Simplicial.
-	array_resize(*scene.selected_simplicial.vertices, scene.mesh.vertices.count);
-	array_resize(*scene.selected_simplicial.edges, scene.mesh.edges.count);
-	array_resize(*scene.selected_simplicial.faces, scene.mesh.faces.count);
-	for * scene.selected_simplicial.vertices { <<it = 0; }
-	for * scene.selected_simplicial.edges { <<it = 0; }
-	for * scene.selected_simplicial.faces { <<it = 0; }
+	load("input/bunny.obj", *scene);
 
 	scene.camera.pos    = .{ 1, 0, 1 };
 	scene.camera.target = .{ 0, 0, 0 };
@@ -172,14 +190,17 @@ main :: () {
 				if it.key_pressed && it.key_code == .ESCAPE {
 					quit = true;
 				}
+				if ui.popup_load_mesh && it.key_pressed && it.key_code == .ENTER    then {
+					load(tprint("input/%.obj", ui.load_input), *scene);
+					ui.popup_load_mesh = false;
+				}
+				if ui.eat_event continue;
 				if it.key_code == #char "Z" then scene.z_down = xx it.key_pressed;
 				if it.key_code == #char "S" then scene.s_down = xx it.key_pressed;
 				if it.key_code == #char "Q" then scene.q_down = xx it.key_pressed;
 				if it.key_code == #char "D" then scene.d_down = xx it.key_pressed;
-				if it.key_pressed && it.key_code == #char "E" then scene.selected_point += 1;
-				if it.key_pressed && it.key_code == #char "A" then scene.selected_point -= 1;
-				if it.key_pressed && it.key_code == #char "R" then scene.selected_point = -1;
 				if it.key_pressed && it.key_code == .SPACEBAR then scene.run = true;
+				if it.key_pressed && it.key_code == #char "I" then ui.popup_load_mesh |= true;
 
 				mouse_left\_can_be_pressed := !scene.mouse_left\_down;
 				mouse_right_can_be_pressed := !scene.mouse_right_down;
@@ -189,11 +210,10 @@ main :: () {
 
 				scene.mouse_left\_pressed = mouse_left\_can_be_pressed && scene.mouse_left\_down;
 				scene.mouse_right_pressed = mouse_right_can_be_pressed && scene.mouse_right_down;
+
+
 			}
 		}
-		if scene.mesh.nvert > 0 then scene.selected_point %= scene.mesh.nvert;
-		else                         scene.selected_point = -1;
-		scene.selected_point = max(scene.selected_point, -1);
 
 		render(*scene, *ui);
 		update(*scene, *ui, dt);
@@ -206,10 +226,6 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	T += dt;
 	scene.camera.target = .{ 0, 0, 0 };
 	
-	if scene.selected_point >= 0 {
-		scene.camera.target = scene.mesh.vertices[scene.selected_point];
-	}
-
 	delta := scene.camera.pos - scene.camera.target;
 	theta := atan2(delta.y, delta.x);
 	l : float = 0;
@@ -227,9 +243,6 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	scene.camera.pos.y = scene.camera.target.y + sin(theta) * l;
 
 	if ui.reset_visible Geometry.clear(scene.selected_simplicial);
-	if ui.add_point && scene.selected_point >= 0 {
-		scene.selected_simplicial.vertices[scene.selected_point] = 1;
-	}
 
 	if ui.run_star {
 		star := Geometry.star(scene.selected_simplicial, scene.mesh);
@@ -429,6 +442,84 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		ui.show_normals = true;
 	}
 
+	if ui.run_minimal_curvature {
+		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
+
+		min_t := +FLOAT32_MAX;
+		max_t := -FLOAT32_MAX;
+		for * ts {
+			k1, k2 := principal_curvatures(it_index, scene.half_mesh, scene.mesh);
+			<<it = k1;
+			min_t = min(min_t, <<it);
+			max_t = max(max_t, <<it);
+		}
+
+		for * scene.mesh.vertex_colors {
+			<<it = Color.map((ts[it_index] - min_t) / (max_t - min_t));
+		}
+		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.run_maximal_curvature {
+		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
+
+		min_t := +FLOAT32_MAX;
+		max_t := -FLOAT32_MAX;
+		for * ts {
+			k1, k2 := principal_curvatures(it_index, scene.half_mesh, scene.mesh);
+			<<it = k2;
+			min_t = min(min_t, <<it);
+			max_t = max(max_t, <<it);
+		}
+
+		for * scene.mesh.vertex_colors {
+			<<it = Color.map((ts[it_index] - min_t) / (max_t - min_t));
+		}
+		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.run_laplace {
+		prob := Geometry.scalar_problem(scene.mesh);
+		
+		u := NewArray(scene.mesh.nvert, float, allocator=temp);
+		for scene.mesh.vertex_visible if it then u[it_index] = 2 * ((it_index % 2) - 0.5); else u[it_index] = 0;
+
+		x := Geometry.solve(u, prob);
+		defer array_free(x);
+
+		min_t := +FLOAT32_MAX;
+		max_t := -FLOAT32_MAX;
+		for x {
+			max_t = max(max_t, it);
+			min_t = min(min_t, it);
+		}
+
+		for x scene.mesh.vertex_colors[it_index] = Color.map((it - min_t) / (max_t - min_t));
+		ui.show_vertex_interpolated = true;
+	}
+
+	if ui.run_heat_iteration {
+		for 0..99 {
+			for scene.mesh.vertex_visible if it then scene.heat[it_index] = 2 * ((it_index % 2) - 0.5);
+
+			dt := MKL.mul(scene.mesh.laplace, scene.heat);
+			defer array_free(dt);
+
+			for scene.heat scene.heat[it_index] -= dt[it_index] * 0.01;
+		}
+
+		min_t := +FLOAT32_MAX;
+		max_t := -FLOAT32_MAX;
+		for scene.heat {
+			max_t = max(max_t, it);
+			min_t = min(min_t, it);
+		}
+
+		for scene.heat
+			scene.mesh.vertex_colors[it_index] = Color.map((it - min_t) / (max_t - min_t), Color.Seismic_Color_Map);
+		ui.show_vertex_interpolated = true;
+	}
+
 	update_ray_picking(scene, ui);
 
 	for * scene.mesh.vertex_visible {
@@ -448,11 +539,7 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 		t := scene.mesh.face_colors;
 		scene.mesh.face_colors.data = temp_colors.data;
 		defer scene.mesh.face_colors.data = t.data;
-		old := false;
-		if scene.selected_point >= 0 old = scene.mesh.vertex_visible[scene.selected_point];
-		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = true;
 		update_gpu_data(*scene.mesh, ui.show_vertex_interpolated);
-		if scene.selected_point >= 0 scene.mesh.vertex_visible[scene.selected_point] = old;
 	}
 }
 
@@ -620,6 +707,7 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 		r.y += ui.scroll_value;
 
 		defer GetRect.end_scrollable_region(region, r.w, r.y, *ui.scroll_value);
+		r.y -= k + pad;
 
 		ui.reset_visible = GetRect.button(r, "Reset", *theme.button_theme);
 		ui.eat_event |= ui.reset_visible;
@@ -719,7 +807,33 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 		ui.eat_event |= ui.run_normal_mean_curvature;
 		r.y -= k + pad;
 
+		ui.run_minimal_curvature = GetRect.button(r, "k1", *theme.button_theme);
+		ui.eat_event |= ui.run_minimal_curvature;
 		r.y -= k + pad;
+
+		ui.run_maximal_curvature = GetRect.button(r, "k2", *theme.button_theme);
+		ui.eat_event |= ui.run_maximal_curvature;
+		r.y -= k + pad;
+
+		ui.run_laplace = GetRect.button(r, "∆", *theme.button_theme);
+		ui.eat_event |= ui.run_laplace;
+		r.y -= k + pad;
+
+		toggle_heat_iteration := GetRect.button(r, "Heat", *theme.button_theme);
+		if toggle_heat_iteration ui.run_heat_iteration ^= true;
+		ui.eat_event |= toggle_heat_iteration;
+		r.y -= k + pad;
+
+		r.y -= k + pad;
+	}
+
+	if ui.popup_load_mesh
+	{
+		r := GetRect.get_rect(window_state.width/2 - 3*k, 14.5*k, 6*k, 1*k);
+		action, text, state :=
+			GetRect.text_input(r, "", *theme.text_input_theme, input_action=.ACTIVATE);
+		ui.load_input = state.text;
+		ui.eat_event |= state.active;
 	}
 
 

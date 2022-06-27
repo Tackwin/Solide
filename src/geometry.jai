@@ -220,16 +220,84 @@ vertex_normal_mean_curvature :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) 
 angle_defect :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	sum := 2 * PI;
 	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
-		sum -= angle(it.out_half_edge, half_mesh, mesh);
+		sum -= angle(half_mesh.half_edges[it.out_half_edge].next, half_mesh, mesh);
 	}
 	return sum;
 }
 
 scalar_mean_curvature :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
+	sum := 0.0;// Vector3 = .{0, 0, 0};
+	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
+		i, j := end_points(half_mesh.half_edges[it.out_half_edge], half_mesh, mesh);
+		k, ii := end_points(half_mesh.half_edges[it.in_half_edge], half_mesh, mesh);
+		assert(i == ii);
+
+		sum += cotan(it.out_half_edge, half_mesh, mesh) * length(j - i);
+		sum += cotan(it.in\_half_edge, half_mesh, mesh) * length(k - i);
+	}
+	return sum / 2;
+}
+
+circumcentric_dual_area :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> float {
 	sum := 0.0;
 	for iterate_adjacent_faces(vertex, *half_mesh, *mesh) {
 		i, j := end_points(half_mesh.half_edges[it.out_half_edge], half_mesh, mesh);
-		sum += angle(it.out_half_edge, half_mesh, mesh) * length(j - i);
+		k, ii := end_points(half_mesh.half_edges[it.in_half_edge], half_mesh, mesh);
+		assert(i == ii);
+
+		lij := length_squared(j - i);
+		lik := length_squared(k - i);
+
+		sum += lij * cotan(it.out_half_edge, half_mesh, mesh);
+		sum += lik * cotan(it.in\_half_edge, half_mesh, mesh);
 	}
-	return sum /= 2;
+	return sum / 8;
+}
+
+principal_curvatures :: (vertex: int, half_mesh: Half_Mesh, mesh: Mesh) -> (k1: float, k2: float) {
+	A := circumcentric_dual_area(vertex, half_mesh, mesh);
+	H := scalar_mean_curvature(vertex, half_mesh, mesh) / A;
+	K := angle_defect(vertex, half_mesh, mesh) / A;
+
+	det := H*H - K;
+	det = max(det, 0);
+
+	k1 := H + sqrt(det);
+	k2 := H - sqrt(det);
+
+	return k1, k2;
+}
+
+mass :: (mesh: Mesh) -> MKL.Sparse_Matrix {
+	return mesh.d0;
+}
+
+Scalar_Problem :: struct {
+	A : MKL.Sparse_Matrix;
+	M : MKL.Sparse_Matrix;
+	sum : float;
+};
+
+scalar_problem :: (mesh: Mesh) -> Scalar_Problem {
+	problem : Scalar_Problem;
+	problem.A = mesh.laplace;
+	problem.M = mesh.hodge_star_0;
+	problem.sum = total_area(mesh);
+	return problem;
+}
+
+solve :: (u: [] float, problem: Scalar_Problem) -> [] float {
+	sum := 0.0;
+	u_bar_vec := MKL.mul(problem.M, u);
+	defer array_free(u_bar_vec);
+
+	for * u_bar_vec { <<it /= problem.sum; };
+	for u_bar_vec { sum += it; };
+
+	for * u_bar_vec { <<it = u[it_index] - <<it; }
+	b := MKL.mul(problem.M, u_bar_vec);
+	defer array_free(b);
+
+	for * b { <<it *= -1; }
+	return MKL.solve(problem.A, b);
 }

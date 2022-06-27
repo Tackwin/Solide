@@ -1,5 +1,6 @@
 #scope_file
 #import "Math";
+#import "Basic";
 
 #scope_export
 
@@ -262,6 +263,71 @@ Viridis_Color_Map : [256]Vector3 : Vector3.[
 	Vector3.{ 0.993248, 0.906157, 0.143936 }
 ];
 
+Seismic_Color_Map : [256] Vector3 : #run -> [256] Vector3 {
+	ret: [256] Vector3;
+
+	colormap_f :: (x: float64) -> float64 {
+		return ((-2010.0 * x + 2502.5950459) * x - 481.763180924) / 255.0;
+	};
+
+	colormap_red :: (x: float64) -> float64 {
+		if (x < 0.0) {
+			return 3.0 / 255.0;
+		} else if (x < 0.238) {
+			return ((-1810.0 * x + 414.49) * x + 3.87702) / 255.0;
+		} else if (x < 51611.0 / 108060.0) {
+			return (344441250.0 / 323659.0 * x - 23422005.0 / 92474.0) / 255.0;
+		} else if (x < 25851.0 / 34402.0) {
+			return 1.0;
+		} else if (x <= 1.0) {
+			return (-688.04 * x + 772.02) / 255.0;
+		} else {
+			return 83.0 / 255.0;
+		}
+	}
+
+	colormap_green :: (x: float64) -> float64 {
+		if (x < 0.0) {
+			return 0.0;
+		} else if (x < 0.238) {
+			return 0.0;
+		} else if (x < 51611.0 / 108060.0) {
+			return colormap_f(x);
+		} else if (x < 0.739376978894039) {
+			X := x - 51611.0 / 108060.0;
+			return ((-914.74 * X - 734.72) * X + 255.) / 255.0;
+		} else {
+			return 0.0;
+		}
+	}
+
+	colormap_blue :: (x: float64) -> float64 {
+		if (x < 0.0) {
+			return 19.0 / 255.0;
+		} else if (x < 0.238) {
+			X := x - 0.238;
+			return (((1624.6 * X + 1191.4) * X + 1180.2) * X + 255.0) / 255.0;
+		} else if (x < 51611.0 / 108060.0) {
+			return 1.0;
+		} else if (x < 174.5 / 256.0) {
+			return (-951.67322673866 * x + 709.532730938451) / 255.0;
+		} else if (x < 0.745745353439206) {
+			return (-705.250074130877 * x + 559.620050530617) / 255.0;
+		} else if (x <= 1.0) {
+			return ((-399.29 * x + 655.71) * x - 233.25) / 255.0;
+		} else {
+			return 23.0 / 255.0;
+		}
+	}
+
+	for 0..255 {
+		ret[it].x = cast(float) colormap_red(it / 255.0);
+		ret[it].y = cast(float) colormap_green(it / 255.0);
+		ret[it].z = cast(float) colormap_blue(it / 255.0);
+	}
+
+	return ret;
+}
 
 map :: (f: float, color_map : [] Vector3 = Viridis_Color_Map) -> Vector3 {
 	a := color_map[0 + cast(int) (f * (color_map.count - 1) * 0.999)];
@@ -270,3 +336,4 @@ map :: (f: float, color_map : [] Vector3 = Viridis_Color_Map) -> Vector3 {
 
 	return a * (1 - t) + b * t;
 }
+

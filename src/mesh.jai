@@ -61,6 +61,8 @@ Mesh :: struct {
 	d0 : MKL.Sparse_Matrix;
 	d1 : MKL.Sparse_Matrix;
 
+	laplace : MKL.Sparse_Matrix;
+
 	Vertex :: struct {
 		pos   : Vector3;
 		color : Vector3;
@@ -300,7 +302,7 @@ construct_half_mesh :: (mesh: Mesh) -> Half_Mesh {
 	return half_mesh;
 }
 
-free_mesh :: (mesh : Mesh) {
+free :: (mesh : Mesh) {
 	array_free(mesh.vertices);
 	array_free(mesh.faces);
 	array_free(mesh.edges);
@@ -315,11 +317,11 @@ free_mesh :: (mesh : Mesh) {
 	array_free(mesh.cpu_buffer);
 }
 
-free_half_mesh :: (half_mesh: Half_Mesh) {
-	array_free(mesh.vertices);
-	array_free(mesh.faces);
-	array_free(mesh.edges);
-	array_free(mesh.half_edges);
+free :: (half_mesh: Half_Mesh) {
+	array_free(half_mesh.vertices);
+	array_free(half_mesh.faces);
+	array_free(half_mesh.edges);
+	array_free(half_mesh.half_edges);
 }
 
 build_matrices :: (half_mesh: Half_Mesh, mesh: *Mesh) {
@@ -330,6 +332,7 @@ build_matrices :: (half_mesh: Half_Mesh, mesh: *Mesh) {
 	mesh.hodge_star_2 = build_hodge_star_2(half_mesh, mesh);
 	mesh.d0 = build_d0(mesh);
 	mesh.d1 = build_d1(mesh);
+	mesh.laplace = build_laplace(half_mesh, mesh);
 }
 
 update_gpu_data :: (mesh: *Mesh, interpolate_vertex_color: bool) {
@@ -575,6 +578,12 @@ area :: (face: int, mesh: Mesh) -> float {
 	return sqrt(s * (s - lij) * (s - ljk) * (s - lki));
 }
 
+total_area :: (mesh: Mesh) -> float {
+	s := 0.0;
+	for 0..mesh.nface-1 s += area(it, mesh);
+	return s;
+}
+
 mean :: (face: int, mesh: Mesh) -> Vector3 {
 	i := mesh.vertices[mesh.faces[face].x];
 	j := mesh.vertices[mesh.faces[face].y];
@@ -742,10 +751,56 @@ build_d1 :: (mesh: *Mesh) -> MKL.Sparse_Matrix {
 	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
 }
 
+build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows_start : [..] s64;
+	col_idx : [..] s64;
+	values : [..] float;
+
+	row := NewArray(mesh.nvert, float, allocator=temp);
+
+	for i: 0..mesh.nvert-1 {
+
+		ui := 0.0;
+
+		for * row { <<it = FLOAT32_MAX; }
+		for iterate_adjacent_faces(i, *half_mesh, *mesh) {
+			uj := 0.0;
+			uj += cotan(it.out_half_edge, half_mesh, mesh);
+			uj += cotan(half_mesh.half_edges[it.out_half_edge].twin, half_mesh, mesh);
+			uj /= 2;
+
+			j := tip(it.out_half_edge, half_mesh);
+
+			row[j] = -uj;
+			ui += uj;
+		}
+
+		row[i] = ui;
+
+		array_add(*rows_start, values.count);
+
+		count := 0;
+		for row if it != FLOAT32_MAX {
+			array_add(*col_idx, it_index);
+			array_add(*values, it);
+
+			count += 1;
+		}
+	}
+	array_add(*rows_start, values.count);
+
+	mat := MKL.create_sparse_matrix(mesh.nvert, mesh.nvert, rows_start, col_idx, values);
+	return mat;
+}
+
 end_points :: (half_edge: Half_Edge, half_mesh: Half_Mesh, mesh: Mesh) -> (Vector3, Vector3) {
 	a := mesh.vertices[half_edge.vertex];
 	b := mesh.vertices[half_mesh.half_edges[half_edge.next].vertex];
 	return (a, b);
+}
+
+tip :: (half_edge: int, half_mesh: Half_Mesh) -> int {
+	return half_mesh.half_edges[half_mesh.half_edges[half_edge].next].vertex;
 }
 
 Iterate_Adjacent_Faces :: struct {
