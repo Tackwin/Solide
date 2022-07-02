@@ -337,3 +337,18 @@ map :: (f: float, color_map : [] Vector3 = Viridis_Color_Map) -> Vector3 {
 	return a * (1 - t) + b * t;
 }
 
+
+log_map :: (f: float, color_map : [] Vector3 = Viridis_Color_Map) -> Vector3 {
+	ff := 2 * f - 1.0;
+	sign := ifx ff > 0 then +1 else -1;
+	ff *= sign;
+	ff = sign / (1.0 - log(ff));
+	ff = (1 + ff) / 2.0;
+
+	a := color_map[0 + cast(int) (ff * (color_map.count - 1) * 0.999)];
+	b := color_map[1 + cast(int) (ff * (color_map.count - 1) * 0.999)];
+	t := ff * color_map.count - cast(int) (ff * color_map.count);
+
+	return a * (1 - t) + b * t;
+}
+

@@ -301,3 +301,34 @@ solve :: (u: [] float, problem: Scalar_Problem) -> [] float {
 	for * b { <<it *= -1; }
 	return MKL.solve(problem.A, b);
 }
+
+heat_method :: (u0: [] float, mesh: Mesh) -> [] float {
+	t := 1.0;
+	for mesh.edges {
+		t += distance(mesh.vertices[it.a], mesh.vertices[it.b]);
+	}
+	t /= mesh.nedge;
+
+	id := MKL.identity(mesh.nvert);
+	// defer MKL.free(id);
+	A := MKL.fmadd(t, mesh.laplace, id);
+	// defer MKL.free(A);
+
+	return MKL.solve(A, u0);
+}
+
+grad :: (x: [] float, mesh: Mesh) -> [] Vector3 {
+	// res := NewArray(mesh.nface, Vector3);
+	// for * res {
+	// 	f := mesh.faces[it_index];
+
+	// 	<<it = cross(mesh.vertices[f.y] - mesh.vertices[f.x], mesh.vertices[f.z] - mesh.vertices[f.x]);
+	// 	<<it = normalize(<<it);
+	// }
+
+	y := MKL.mul(mesh.grad, x);
+	res : [] Vector3;
+	res.data = cast(*Vector3) y.data;
+	res.count = y.count / 3;
+	return res;
+}

@@ -1,3 +1,4 @@
+
 #scope_file
 #load "mkl_api.jai";
 #import "src/std";
@@ -42,6 +43,21 @@ create_sparse_matrix :: (
 	);
 	status =  mkl_sparse_optimize(mat.mat);
 	return mat;
+}
+
+identity :: (rows: int) -> Sparse_Matrix {
+	row_start := NewArray(rows + 1, s64, allocator=temp);
+	col_idx := NewArray(rows, s64, allocator=temp);
+	values := NewArray(rows, float32, allocator=temp);
+
+	for 0..rows-1 {
+		row_start[it] = it;
+		col_idx[it] = it;
+		values[it] = 1;
+	}
+	row_start[rows] = rows;
+
+	return create_sparse_matrix(rows, rows, row_start, col_idx, values);
 }
 
 free :: (mat: Sparse_Matrix) {
@@ -105,6 +121,13 @@ mul :: (x: [] float, A: Sparse_Matrix) -> [..] float {
 	return y;
 }
 
+fmadd :: (alpha: float, A: Sparse_Matrix, B: Sparse_Matrix) -> Sparse_Matrix {
+	C: Sparse_Matrix;
+	status := mkl_sparse_s_add(.NON_TRANSPOSE, A.mat, alpha, B.mat, *C.mat);
+	assert(status == .SUCCESS);
+	return C;
+}
+
 print :: (A: Sparse_Matrix) {
 	row_idx := 0;
 
@@ -119,7 +142,7 @@ print :: (A: Sparse_Matrix) {
 
 	for r: 0..A.rows-1 {
 		for c: 0..A.cols-1 {
-			print("% ", dense[r * A.cols + c]);
+			print("% ", formatFloat(dense[r * A.cols + c], 5, 2));
 		}
 		print("\n");
 	}

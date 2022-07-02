@@ -18,6 +18,8 @@ Geometry :: #import "src/geometry";
 Collision :: #import "src/collision";
 DEC :: #import "src/dec";
 Color :: #import "src/color";
+
+#import "src/app";
 #scope_export
 
 Window_State :: struct {
@@ -32,96 +34,11 @@ Simp_State :: struct {
 	height : s64;
 };
 
-Camera :: struct {
-	fov := 60.0;
-	far := 500.0;
-	near := 0.01;
-
-	speed := 1.5;
-
-	pos : Vector3;
-	target : Vector3;
-}
-
-Scene_State :: struct {
-	mouse_left_pressed := false;
-	mouse_right_pressed := false;
-	mouse_left_down := false;
-	mouse_right_down := false;
-	
-	z_down : bool = false;
-	s_down : bool = false;
-	d_down : bool = false;
-	q_down : bool = false;
-
-	model_matrix : Matrix4 = Matrix4_Identity;
-	shader : Shader;
-	mesh   : Mesh;
-	half_mesh : Half_Mesh;
-
-	selected_simplicial : Geometry.Simplicial_Complex;
-	selected_half_edge := -1;
-
-	hover_vertex : s64 = -1;
-	hover_edge : s64 = -1;
-	hover_face : s64 = -1;
-
-	run := false;
-
-	camera: Camera;
-
-	vertex_normals : [] Vector3;
-	heat : [] float;
-
-	unit_vector_rotating_time := 0.0;
-	scale_factor := 1.0;
-};
-
-Ui_State :: struct {
-	eat_event := false;
-	scroll_value := 0.0;
-
-	reset_visible := false;
-	reset_normals := false;
-	show_vertex_interpolated := false;
-	show_half_edges := false;
-	show_normals := false;
-
-	scale_up := false;
-	scale_down := false;
-
-	toggle_rotation := true;
-
-	add_point := false;
-	run_star := false;
-	run_closure := false;
-	run_link := false;
-	run_boundary := false;
-	run_cotan := false;
-	run_barycentric_dual_area := false;
-	run_hodge0 := false;
-	run_hodge1 := false;
-	run_hodge2 := false;
-	run_angle := false;
-	run_angle_defect := false;
-	run_next := false;
-	run_twin := false;
-	run_normal_angle_weighted := false;
-	run_normal_sphere_inscribed := false;
-	run_normal_area_weighted := false;
-	run_normal_gaussian_curvature := false;
-	run_normal_mean_curvature := false;
-	run_minimal_curvature := false;
-	run_maximal_curvature := false;
-	run_laplace := false;
-	run_heat_iteration := false;
-
-	popup_load_mesh := false;
-	load_input := "<path to your obj>";
-};
-
 window_state : Window_State;
 simp_state : Simp_State;
+
+#placeholder trigger_routines;
+#placeholder compute_routines;
 
 load :: (path: string, scene: *Scene_State) {
 	free(scene.mesh);
@@ -161,7 +78,7 @@ main :: () {
 
 	scene : Scene_State;
 	scene.shader = shader_init();
-	load("input/bunny.obj", *scene);
+	load("input/ico.obj", *scene);
 
 	scene.camera.pos    = .{ 1, 0, 1 };
 	scene.camera.target = .{ 0, 0, 0 };
@@ -252,314 +169,12 @@ update :: (scene: *Scene_State, ui: *Ui_State, dt: float) {
 	scene.camera.pos.x = scene.camera.target.x + cos(theta) * l;
 	scene.camera.pos.y = scene.camera.target.y + sin(theta) * l;
 
-	if (ui.toggle_rotation) {
-		scene.unit_vector_rotating_time += dt;
-		x := cos(2 * PI * scene.unit_vector_rotating_time / 10 + 0 * PI / 3);
-		y := cos(2 * PI * scene.unit_vector_rotating_time / 10 + 2 * PI / 3);
-		z := cos(2 * PI * scene.unit_vector_rotating_time / 10 + 4 * PI / 3);
 
-		scene.model_matrix = look_at_matrix(.{0, 0, 0}, normalize(make_vector3(x, y, z)));
-		scene.model_matrix._11 *= scene.scale_factor;
-		scene.model_matrix._12 *= scene.scale_factor;
-		scene.model_matrix._13 *= scene.scale_factor;
-		scene.model_matrix._21 *= scene.scale_factor;
-		scene.model_matrix._22 *= scene.scale_factor;
-		scene.model_matrix._23 *= scene.scale_factor;
-		scene.model_matrix._31 *= scene.scale_factor;
-		scene.model_matrix._32 *= scene.scale_factor;
-		scene.model_matrix._33 *= scene.scale_factor;
-	}
-
-	if ui.scale_up {
-		f := 1.5;
-		scene.scale_factor *= f;
-	}
-	if ui.scale_down {
-		f := 1.5;
-		scene.scale_factor /= f;
-	}
-
-	if ui.reset_visible Geometry.clear(scene.selected_simplicial);
-
-	if ui.run_star {
-		star := Geometry.star(scene.selected_simplicial, scene.mesh);
-		defer free(star);
-
-		Geometry.swap(*star, *scene.selected_simplicial);
-	}
-	if ui.run_closure {
-		closure := Geometry.closure(scene.selected_simplicial, scene.mesh);
-		defer free(closure);
-
-		Geometry.swap(*closure, *scene.selected_simplicial);
-	}
-
-	if ui.run_link {
-		link := Geometry.link(scene.selected_simplicial, scene.mesh);
-		defer free(link);
-
-		Geometry.swap(*link, *scene.selected_simplicial);
-	}
-
-	if ui.run_boundary {
-		boundary := Geometry.boundary(scene.selected_simplicial, scene.mesh);
-		defer free(boundary);
-
-		Geometry.swap(*boundary, *scene.selected_simplicial);
-	}
-
-	if ui.run_cotan {
-		for scene.half_mesh.vertices {
-			co := cotan(it, scene.half_mesh, scene.mesh);
-			t := 1.0 / (1.0 + exp(co));
-			scene.mesh.vertex_colors[it_index] = Color.map(t);
-		}
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_barycentric_dual_area {
-		ts := NewArray(scene.half_mesh.vertices.count, float, allocator=temp);
-
-		max_t := 0.0;
-		for scene.half_mesh.vertices {
-			area := barycentric_dual_area(it_index, scene.half_mesh, scene.mesh);
-			ts[it_index] = area;
-			max_t = max(max_t, area);
-		}
-		for ts scene.mesh.vertex_colors[it_index] = Color.map(it / max_t);
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_hodge0 {
-		star0 := scene.mesh.hodge_star_0;
-		
-		max_t := 0.0;
-		for star0.values max_t = max(max_t, it);
-		for star0.values scene.mesh.vertex_colors[it_index] = Color.map(it / max_t);
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_hodge1 {
-		star1 := scene.mesh.hodge_star_1;
-		
-		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
-		ns := NewArray(scene.mesh.nvert, float, allocator=temp);
-		for * ns { <<it = 0; }
-		max_t := 0.0;
-		min_t := 0.0;
-		for star1.values { max_t = max(max_t, it); min_t = min(min_t, it); }
-		for star1.values {
-			ts[scene.mesh.edges[it_index].a] += (it - min_t) / (max_t - min_t);
-			ts[scene.mesh.edges[it_index].b] += (it - min_t) / (max_t - min_t);
-			ns[scene.mesh.edges[it_index].a] += 1;
-			ns[scene.mesh.edges[it_index].b] += 1;
-		}
-		for * scene.mesh.vertex_colors { <<it = Color.map(ts[it_index] / ns[it_index]); }
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_hodge2 {
-		star2 := scene.mesh.hodge_star_2;
-		
-		max_t := 0.0;
-		for star2.values max_t = max(max_t, it);
-		for * scene.mesh.face_colors { <<it = Color.map(star2.values[it_index] / max_t); }
-		ui.show_vertex_interpolated = false;
-	}
-
-	if ui.run_angle {
-		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
-		ns := NewArray(scene.mesh.nvert, float, allocator=temp);
-		for * ns { <<it = 0; }
-
-		for scene.half_mesh.half_edges {
-			a := Geometry.angle(it_index, scene.half_mesh, scene.mesh);
-
-			v := it.vertex;
-			ts[v] += a;
-			ns[v] += 1;
-		}
-
-		max_t : float = 3.1415926;
-		for * scene.mesh.vertex_colors { <<it = Color.map(ts[it_index] / (ns[it_index] * max_t)); }
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_angle_defect {
-		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
-
-		for 0..scene.mesh.nvert-1 {
-			ts[it] = Geometry.angle_defect(it, scene.half_mesh, scene.mesh);
-		}
-
-		max_t : float = 2 * PI;
-		min_t : float = -2 * PI;
-		for * scene.mesh.vertex_colors { <<it = Color.map((ts[it_index] - min_t) / (max_t - min_t)); }
-		ui.show_vertex_interpolated = true;
-	}
-	
-	if ui.run_next {
-		if scene.selected_half_edge < 0 {
-			scene.selected_half_edge = max(scene.selected_half_edge, 0);
-		} else {
-			scene.selected_half_edge = scene.half_mesh.half_edges[scene.selected_half_edge].next;
-		}
-	}
-
-	if ui.run_twin {
-		if scene.selected_half_edge < 0 {
-			scene.selected_half_edge = max(scene.selected_half_edge, 0);
-		} else {
-			scene.selected_half_edge = scene.half_mesh.half_edges[scene.selected_half_edge].twin;
-		}
-	}
-
-	if ui.run_normal_angle_weighted {
-		array_free(scene.vertex_normals);
-		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
-
-		for 0..scene.mesh.nvert-1 {
-			scene.vertex_normals[it] = Geometry.vertex_normal_angle_weighted(
-				it, scene.half_mesh, scene.mesh
-			);
-		}
-
-		ui.show_normals = true;
-	}
-
-	if ui.run_normal_sphere_inscribed {
-		array_free(scene.vertex_normals);
-		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
-
-		for 0..scene.mesh.nvert-1 {
-			scene.vertex_normals[it] = Geometry.vertex_normal_sphere_inscribed(
-				it, scene.half_mesh, scene.mesh
-			);
-		}
-
-		ui.show_normals = true;
-	}
-
-	if ui.run_normal_area_weighted {
-		array_free(scene.vertex_normals);
-		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
-
-		for 0..scene.mesh.nvert-1 {
-			scene.vertex_normals[it] = Geometry.vertex_normal_area_weighted(
-				it, scene.half_mesh, scene.mesh
-			);
-		}
-
-		ui.show_normals = true;
-	}
-
-	if ui.run_normal_gaussian_curvature {
-		array_free(scene.vertex_normals);
-		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
-
-		for 0..scene.mesh.nvert-1 {
-			scene.vertex_normals[it] = Geometry.vertex_normal_gaussian_curvature(
-				it, scene.half_mesh, scene.mesh
-			);
-		}
-
-		ui.show_normals = true;
-	}
-
-	if ui.run_normal_mean_curvature {
-		array_free(scene.vertex_normals);
-		scene.vertex_normals = NewArray(scene.mesh.nvert, Vector3);
-
-		for 0..scene.mesh.nvert-1 {
-			scene.vertex_normals[it] = Geometry.vertex_normal_mean_curvature(
-				it, scene.half_mesh, scene.mesh
-			);
-		}
-
-		ui.show_normals = true;
-	}
-
-	if ui.run_minimal_curvature {
-		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
-
-		min_t := +FLOAT32_MAX;
-		max_t := -FLOAT32_MAX;
-		for * ts {
-			k1, k2 := principal_curvatures(it_index, scene.half_mesh, scene.mesh);
-			<<it = k1;
-			min_t = min(min_t, <<it);
-			max_t = max(max_t, <<it);
-		}
-
-		for * scene.mesh.vertex_colors {
-			<<it = Color.map((ts[it_index] - min_t) / (max_t - min_t));
-		}
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_maximal_curvature {
-		ts := NewArray(scene.mesh.nvert, float, allocator=temp);
-
-		min_t := +FLOAT32_MAX;
-		max_t := -FLOAT32_MAX;
-		for * ts {
-			k1, k2 := principal_curvatures(it_index, scene.half_mesh, scene.mesh);
-			<<it = k2;
-			min_t = min(min_t, <<it);
-			max_t = max(max_t, <<it);
-		}
-
-		for * scene.mesh.vertex_colors {
-			<<it = Color.map((ts[it_index] - min_t) / (max_t - min_t));
-		}
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_laplace {
-		prob := Geometry.scalar_problem(scene.mesh);
-		
-		u := NewArray(scene.mesh.nvert, float, allocator=temp);
-		for scene.mesh.vertex_visible if it then u[it_index] = 2 * ((it_index % 2) - 0.5); else u[it_index] = 0;
-
-		x := Geometry.solve(u, prob);
-		defer array_free(x);
-
-		min_t := +FLOAT32_MAX;
-		max_t := -FLOAT32_MAX;
-		for x {
-			max_t = max(max_t, it);
-			min_t = min(min_t, it);
-		}
-
-		for x scene.mesh.vertex_colors[it_index] = Color.map((it - min_t) / (max_t - min_t));
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.run_heat_iteration {
-		for 0..99 {
-			for scene.mesh.vertex_visible if it then scene.heat[it_index] = 2 * ((it_index % 2) - 0.5);
-
-			dt := MKL.mul(scene.mesh.laplace, scene.heat);
-			defer array_free(dt);
-
-			for scene.heat scene.heat[it_index] -= dt[it_index] * 0.01;
-		}
-
-		min_t := -1.0;
-		max_t := +1.0;
-		for scene.heat {
-			max_t = max(max_t, it);
-			min_t = min(min_t, it);
-		}
-
-		for scene.heat
-			scene.mesh.vertex_colors[it_index] = Color.map((it - min_t) / (max_t - min_t), Color.Seismic_Color_Map);
-		ui.show_vertex_interpolated = true;
-	}
-
-	if ui.reset_normals {
-		scene.vertex_normals.count = 0;
-	}
+	for compute_routines it(ui, scene);
+	if ui.scale_up        scene.scale_factor *= 1.5;
+	if ui.scale_down      scene.scale_factor /= 1.5;
+	if ui.reset_normals   scene.vertex_normals.count = 0;
+	if ui.toggle_rotation scene.unit_vector_rotating_time += dt;
 
 	update_ray_picking(scene, ui);
 
@@ -598,6 +213,7 @@ update_ray_picking :: (scene: *Scene_State, ui: *Ui_State) {
 	t_sph : float = FLOAT32_MAX;
 
 	tri_idx := -1;
+	
 	edg_idx := -1;
 	ver_idx := -1;
 
@@ -712,6 +328,21 @@ render :: (scene: *Scene_State, ui: *Ui_State) {
 		}
 		Render.arrows(instances, proj * view, tip_ratio=0.1);
 	}
+	if ui.show_arrows {
+		instances := NewArray(scene.face_arrows.count, Render.Arrow, allocator=temp);
+		max_t := -FLOAT32_MAX;
+		for scene.face_arrows max_t = max(max_t, length(it));
+		
+		for scene.face_arrows {
+			r := sqrt(length(it) / max_t) * 0.1;
+			a := sqrt(area(it_index, scene.mesh)) * 3;
+			instances[it_index].a = mean(it_index, scene.mesh);
+			instances[it_index].b = instances[it_index].a + normalize(it) * r;
+			instances[it_index].r = 0.004;
+			instances[it_index].color = .{1, 1, 1};
+		}
+		Render.arrows(instances, proj * view, tip_ratio=0.2);
+	}
 	// Render.arrows(samples, proj * view, tip_ratio= 0.8 * sin(T) * sin(T) + 0.1);
 
 	render_ui(scene, ui);
@@ -756,138 +387,10 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 		defer GetRect.end_scrollable_region(region, r.w, r.y, *ui.scroll_value);
 		r.y -= k + pad;
 
-		ui.reset_visible = GetRect.button(r, "Reset", *theme.button_theme);
-		ui.eat_event |= ui.reset_visible;
-		r.y -= k + pad;
-
-		ui.run_star = GetRect.button(r, "Run star", *theme.button_theme);
-		ui.eat_event |= ui.run_star;
-		r.y -= k + pad;
-
-		ui.run_closure = GetRect.button(r, "Run closure", *theme.button_theme);
-		ui.eat_event |= ui.run_closure;
-		r.y -= k + pad;
-
-		ui.run_link = GetRect.button(r, "Run link", *theme.button_theme);
-		ui.eat_event |= ui.run_link;
-		r.y -= k + pad;
-
-		ui.run_boundary = GetRect.button(r, "Run boundary", *theme.button_theme);
-		ui.eat_event |= ui.run_boundary;
-		r.y -= k + pad;
-
-		ui.add_point = GetRect.button(r, "Add point", *theme.button_theme);
-		ui.eat_event |= ui.add_point;
-		r.y -= k + pad;
-
-		ui.run_cotan = GetRect.button(r, "Cotan", *theme.button_theme);
-		ui.eat_event |= ui.run_cotan;
-		r.y -= k + pad;
-
-		ui.run_barycentric_dual_area = GetRect.button(r, "Barycenter", *theme.button_theme);
-		ui.eat_event |= ui.run_barycentric_dual_area;
-		r.y -= k + pad;
-
-		ui.run_hodge0 = GetRect.button(r, "*0", *theme.button_theme);
-		ui.eat_event |= ui.run_hodge0;
-		r.y -= k + pad;
-
-		ui.run_hodge1 = GetRect.button(r, "*1", *theme.button_theme);
-		ui.eat_event |= ui.run_hodge1;
-		r.y -= k + pad;
-
-		ui.run_hodge2 = GetRect.button(r, "*2", *theme.button_theme);
-		ui.eat_event |= ui.run_hodge2;
-		r.y -= k + pad;
-
-		ui.run_angle = GetRect.button(r, "Angle", *theme.button_theme);
-		ui.eat_event |= ui.run_angle;
-		r.y -= k + pad;
-
-		ui.run_angle_defect = GetRect.button(r, "Angle Defect", *theme.button_theme);
-		ui.eat_event |= ui.run_angle_defect;
-		r.y -= k + pad;
-		
-		ui.run_next = GetRect.button(r, "Next", *theme.button_theme);
-		ui.eat_event |= ui.run_next;
-		r.y -= k + pad;
-
-		ui.run_twin = GetRect.button(r, "Twin", *theme.button_theme);
-		ui.eat_event |= ui.run_twin;
-		r.y -= k + pad;
-
-		if GetRect.button(r, "Toggle Vertex", *theme.button_theme) {
-			ui.eat_event |= true;
-			ui.show_vertex_interpolated = !ui.show_vertex_interpolated;
+		for trigger_routines {
+			ui.eat_event |= it(ui, *r);
+			r.y -= pad;
 		}
-		r.y -= k + pad;
-
-		if GetRect.button(r, "Toggle Half Edges", *theme.button_theme) {
-			ui.eat_event |= true;
-			ui.show_half_edges = !ui.show_half_edges;
-		}
-		r.y -= k + pad;
-		
-		if GetRect.button(r, "Toggle Normals", *theme.button_theme) {
-			ui.eat_event |= true;
-			ui.show_normals = !ui.show_normals;
-		}
-		r.y -= k + pad;
-		
-		ui.run_normal_angle_weighted = GetRect.button(r, "N phi", *theme.button_theme);
-		ui.eat_event |= ui.run_normal_angle_weighted;
-		r.y -= k + pad;
-
-		ui.run_normal_sphere_inscribed = GetRect.button(r, "N s", *theme.button_theme);
-		ui.eat_event |= ui.run_normal_sphere_inscribed;
-		r.y -= k + pad;
-		
-		ui.run_normal_area_weighted = GetRect.button(r, "N a", *theme.button_theme);
-		ui.eat_event |= ui.run_normal_area_weighted;
-		r.y -= k + pad;
-		
-		ui.run_normal_gaussian_curvature = GetRect.button(r, "KN", *theme.button_theme);
-		ui.eat_event |= ui.run_normal_gaussian_curvature;
-		r.y -= k + pad;
-
-		ui.run_normal_mean_curvature = GetRect.button(r, "HN", *theme.button_theme);
-		ui.eat_event |= ui.run_normal_mean_curvature;
-		r.y -= k + pad;
-
-		ui.run_minimal_curvature = GetRect.button(r, "k1", *theme.button_theme);
-		ui.eat_event |= ui.run_minimal_curvature;
-		r.y -= k + pad;
-
-		ui.run_maximal_curvature = GetRect.button(r, "k2", *theme.button_theme);
-		ui.eat_event |= ui.run_maximal_curvature;
-		r.y -= k + pad;
-
-		ui.run_laplace = GetRect.button(r, "∆", *theme.button_theme);
-		ui.eat_event |= ui.run_laplace;
-		r.y -= k + pad;
-
-		toggle_heat_iteration := GetRect.button(r, "Heat", *theme.button_theme);
-		if toggle_heat_iteration ui.run_heat_iteration ^= true;
-		ui.eat_event |= toggle_heat_iteration;
-		r.y -= k + pad;
-
-		toggle_rotation := GetRect.button(r, "Rotate", *theme.button_theme);
-		if toggle_rotation ui.toggle_rotation ^= true;
-		ui.eat_event |= toggle_rotation;
-		r.y -= k + pad;
-
-		ui.reset_normals = GetRect.button(r, "Reset normals", *theme.button_theme);
-		ui.eat_event |= ui.reset_normals;
-		r.y -= k + pad;
-
-		ui.scale_up = GetRect.button(r, "Scale up", *theme.button_theme);
-		ui.eat_event |= ui.scale_up;
-		r.y -= k + pad;
-
-		ui.scale_down = GetRect.button(r, "Scale down", *theme.button_theme);
-		ui.eat_event |= ui.scale_down;
-		r.y -= k + pad;
-
 		r.y -= k + pad;
 	}
 
@@ -903,6 +406,8 @@ render_ui :: (scene: *Scene_State, ui: *Ui_State) {
 
 	GetRect.draw_popups();
 }
+
+#scope_file
 
 look_at_matrix :: (viewpoint: Vector3, look_at: Vector3) -> Matrix4 {
 	up : Vector3 = .{0, 0, 1};

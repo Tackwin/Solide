@@ -61,6 +61,8 @@ Mesh :: struct {
 	d0 : MKL.Sparse_Matrix;
 	d1 : MKL.Sparse_Matrix;
 
+	grad : MKL.Sparse_Matrix;
+
 	laplace : MKL.Sparse_Matrix;
 
 	Vertex :: struct {
@@ -319,6 +321,16 @@ free :: (mesh : Mesh) {
 	uninit(*mesh.pair_vertex_edge_map);
 
 	array_free(mesh.cpu_buffer);
+
+	MKL.free(mesh.A0);
+	MKL.free(mesh.A1);
+	MKL.free(mesh.hodge_star_0);
+	MKL.free(mesh.hodge_star_1);
+	MKL.free(mesh.hodge_star_2);
+	MKL.free(mesh.d0);
+	MKL.free(mesh.d1);
+	MKL.free(mesh.laplace);
+	MKL.free(mesh.grad);
 }
 
 free :: (half_mesh: Half_Mesh) {
@@ -337,6 +349,7 @@ build_matrices :: (half_mesh: Half_Mesh, mesh: *Mesh) {
 	mesh.d0 = build_d0(mesh);
 	mesh.d1 = build_d1(mesh);
 	mesh.laplace = build_laplace(half_mesh, mesh);
+	mesh.grad = build_grad(half_mesh, mesh);
 }
 
 update_gpu_data :: (
@@ -813,18 +826,66 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 
 		array_add(*rows_start, values.count);
 
-		count := 0;
 		for row if it != FLOAT32_MAX {
 			array_add(*col_idx, it_index);
 			array_add(*values, it);
-
-			count += 1;
 		}
 	}
 	array_add(*rows_start, values.count);
 
 	mat := MKL.create_sparse_matrix(mesh.nvert, mesh.nvert, rows_start, col_idx, values);
 	return mat;
+}
+
+build_grad :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows_start : [..] s64;
+	col_idx : [..] s64;
+	values : [..] float;
+
+	for f, f_idx: mesh.faces {
+		a := area(f_idx, mesh);
+
+		e0 := mesh.vertices[f.y] - mesh.vertices[f.x];
+		e1 := mesh.vertices[f.z] - mesh.vertices[f.y];
+		e2 := mesh.vertices[f.x] - mesh.vertices[f.z];
+
+		n := normalize(cross(e0, e1));
+
+		je0 := cross(n, e0);
+		je1 := cross(n, e1);
+		je2 := cross(n, e2);
+
+		// X
+		array_add(*rows_start, values.count);
+		array_add(*col_idx, f.x);
+		array_add(*values, je1.x / a);
+		array_add(*col_idx, f.y);
+		array_add(*values, je2.x / a);
+		array_add(*col_idx, f.z);
+		array_add(*values, je0.x / a);
+		
+		// Y
+		array_add(*rows_start, values.count);
+		array_add(*col_idx, f.x);
+		array_add(*values, je1.y / a);
+		array_add(*col_idx, f.y);
+		array_add(*values, je2.y / a);
+		array_add(*col_idx, f.z);
+		array_add(*values, je0.y / a);
+		
+		// Z
+		array_add(*rows_start, values.count);
+		array_add(*col_idx, f.x);
+		array_add(*values, je1.z / a);
+		array_add(*col_idx, f.y);
+		array_add(*values, je2.z / a);
+		array_add(*col_idx, f.z);
+		array_add(*values, je0.z / a);
+	}
+
+	array_add(*rows_start, values.count);
+
+	return MKL.create_sparse_matrix(rows_start.count - 1, mesh.nvert, rows_start, col_idx, values);
 }
 
 end_points :: (half_edge: Half_Edge, half_mesh: Half_Mesh, mesh: Mesh) -> (Vector3, Vector3) {

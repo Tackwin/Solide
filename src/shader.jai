@@ -14,13 +14,16 @@ layout (location = 2) in vec4 pos;
 
 out vec4 frag_color;
 
-vec3 light_pos = vec3(10, 10, 10);
+vec3 light1_pos = vec3(+100, +100, +100);
+vec3 light2_pos = vec3(-100, -100, -100);
 
 void main() {
-	vec3 light_dir = normalize(light_pos - pos.xyz);
-	float diff = max(dot(normal, light_dir), 0.2);
+	vec3 light1_dir = normalize(light1_pos - pos.xyz);
+	float diff1 = max(dot(normal, light1_dir), 0.2);
+	vec3 light2_dir = normalize(light2_pos - pos.xyz);
+	float diff2 = max(dot(normal, light2_dir), 0.2);
 
-	frag_color = vec4(diff * color, 1.0);
+	frag_color = vec4(diff1 * color + diff2 * color, 1.0);
 }
 FRAG
 
@@ -41,7 +44,7 @@ layout (location = 2) out vec4 frag_pos;
 void main() {
 	frag_color = color;
 	frag_pos = vec4(pos, 1.0) * model;
-	frag_normal = (vec4(normal, 0.0) * model).xyz;
+	frag_normal = normalize((vec4(normal, 0.0) * model).xyz);
 	gl_Position = frag_pos * view * projection;
 }
 VERT
