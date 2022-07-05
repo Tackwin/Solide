@@ -332,3 +332,22 @@ grad :: (x: [] float, mesh: Mesh) -> [] Vector3 {
 	res.count = y.count / 3;
 	return res;
 }
+
+div :: (x: [] Vector3, mesh: Mesh) -> [] float {
+	X := NewArray(x.count * 3, float, allocator=temp);
+	for x {
+		X[it_index * 3 + 0] = it.x;
+		X[it_index * 3 + 1] = it.y;
+		X[it_index * 3 + 2] = it.z;
+	}
+
+	y := MKL.mul(mesh.div, X);
+	return collapse_div(y);
+}
+
+poisson :: (b: [] float, mesh: Mesh) -> [] float {
+	bb := MKL.mul(mesh.hodge_star_0, b);
+	defer array_free(bb);
+
+	return MKL.solve(mesh.laplace, bb);
+}

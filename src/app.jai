@@ -76,7 +76,9 @@ Ui_State :: struct {
 	toggle_rotation := false;
 
 	add_point := false;
+	run_poisson := false;
 	run_grad := false;
+	run_div := false;
 	run_star := false;
 	run_closure := false;
 	run_link := false;
@@ -578,7 +580,7 @@ compute_heat_method :: (ui: *Ui_State, scene: *Scene_State) {
 
 	u0 := NewArray(scene.mesh.nvert, float, allocator=temp);
 
-	for 0..99 {
+	for 0..999 {
 		for scene.mesh.vertex_visible if it then u0[it_index] = 2 * ((it_index % 2) - 0.5);
 		scene.heat = Geometry.heat_method(u0, scene.mesh);
 
@@ -686,6 +688,66 @@ compute_grad :: (ui: *Ui_State, scene: *Scene_State) {
 
 	ui.show_arrows = true;
 } @Action(29);
+
+
+trigger_div :: (ui: *Ui_State, r: *GetRect.Rect) -> bool {
+	ui.run_div = GetRect.button(r, "Div");
+	r.y -= r.h;
+	return ui.run_div;
+} @Action(30);
+
+compute_div :: (ui: *Ui_State, scene: *Scene_State) {
+	if !ui.run_div return;
+	
+	array_free(scene.heat);
+	before := array_copy(scene.heat);
+	for * scene.face_arrows { <<it = normalize(<<it, fallback=.{1, 0, 0}); }
+	scene.heat = Geometry.div(scene.face_arrows, scene.mesh);
+	scene.face_arrows.count = 0;
+
+	min_t := +FLOAT32_MAX;
+	max_t := -FLOAT32_MAX;
+	for scene.heat {
+		max_t = max(max_t, it);
+		min_t = min(min_t, it);
+	}
+
+	for scene.heat {
+		c := Color.map((it - min_t) / (max_t - min_t), Color.Seismic_Color_Map);
+		scene.mesh.vertex_colors[it_index] = c;
+	}
+
+	ui.show_vertex_interpolated = true;
+} @Action(30);
+
+
+trigger_poisson :: (ui: *Ui_State, r: *GetRect.Rect) -> bool {
+	ui.run_poisson = GetRect.button(r, "Poisson");
+	r.y -= r.h;
+	return ui.run_poisson;
+} @Action(31);
+
+compute_poisson :: (ui: *Ui_State, scene: *Scene_State) {
+	if !ui.run_poisson return;
+
+	heat := scene.heat;
+	defer array_free(heat);
+	scene.heat = Geometry.poisson(heat, scene.mesh);
+
+	min_t := +FLOAT32_MAX;
+	max_t := -FLOAT32_MAX;
+	for scene.heat {
+		max_t = max(max_t, it);
+		min_t = min(min_t, it);
+	}
+
+	for scene.heat {
+		c := Color.map((it - min_t) / (max_t - min_t), Color.Seismic_Color_Map);
+		scene.mesh.vertex_colors[it_index] = c;
+	}
+
+	ui.show_vertex_interpolated = true;
+} @Action(31);
 
 #scope_file
 

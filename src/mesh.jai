@@ -62,6 +62,7 @@ Mesh :: struct {
 	d1 : MKL.Sparse_Matrix;
 
 	grad : MKL.Sparse_Matrix;
+	div  : MKL.Sparse_Matrix;
 
 	laplace : MKL.Sparse_Matrix;
 
@@ -331,6 +332,7 @@ free :: (mesh : Mesh) {
 	MKL.free(mesh.d1);
 	MKL.free(mesh.laplace);
 	MKL.free(mesh.grad);
+	MKL.free(mesh.div);
 }
 
 free :: (half_mesh: Half_Mesh) {
@@ -350,6 +352,7 @@ build_matrices :: (half_mesh: Half_Mesh, mesh: *Mesh) {
 	mesh.d1 = build_d1(mesh);
 	mesh.laplace = build_laplace(half_mesh, mesh);
 	mesh.grad = build_grad(half_mesh, mesh);
+	mesh.div = build_div(half_mesh, mesh);
 }
 
 update_gpu_data :: (
@@ -886,6 +889,83 @@ build_grad :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 	array_add(*rows_start, values.count);
 
 	return MKL.create_sparse_matrix(rows_start.count - 1, mesh.nvert, rows_start, col_idx, values);
+}
+
+build_div :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows := mesh.nvert * 3;
+	cols := mesh.nface * 3;
+
+	rows_start : [..] s64;
+	col_idx : [..] s64;
+	values : [..] float;
+
+	col_row : [..] s64;
+	x_row : [..] float;
+	y_row : [..] float;
+	z_row : [..] float;
+	defer {
+		array_free(col_row);
+		array_free(x_row);
+		array_free(y_row);
+		array_free(z_row);
+	}
+
+	for v, v_idx: mesh.vertices {
+		a := v;
+
+		col_row.count = 0;
+		x_row.count = 0;
+		y_row.count = 0;
+		z_row.count = 0;
+
+		for iterate_adjacent_faces(v_idx, *half_mesh, *mesh) {
+			twin_in_he := half_mesh.half_edges[it.in_half_edge].twin;
+			
+			b := mesh.vertices[tip(it.out_half_edge, half_mesh)];
+			c := mesh.vertices[tip(twin_in_he, half_mesh)];
+
+			e1 := b - a;
+			e2 := c - a;
+
+			t1 := cotan(it.out_half_edge, half_mesh, mesh);
+			t2 := cotan(twin_in_he, half_mesh, mesh);
+
+			array_add(*col_row, it.face);
+			array_add(*x_row, (t1 * e1.x + t2 * e2.x) / 2);
+			array_add(*y_row, (t1 * e1.y + t2 * e2.y) / 2);
+			array_add(*z_row, (t1 * e1.z + t2 * e2.z) / 2);
+		}
+
+		array_add(*rows_start, values.count);
+		for x_row {
+			array_add(*values, it);
+			array_add(*col_idx, col_row[it_index]);
+		}
+		array_add(*rows_start, values.count);
+		for y_row {
+			array_add(*values, it);
+			array_add(*col_idx, col_row[it_index]);
+		}
+		array_add(*rows_start, values.count);
+		for z_row {
+			array_add(*values, it);
+			array_add(*col_idx, col_row[it_index]);
+		}
+	}
+	array_add(*rows_start, values.count);
+	return MKL.create_sparse_matrix(rows, cols, rows_start, col_idx, values);
+}
+
+collapse_div :: (div: [] float) -> [] float {
+	collapsed : [] float;
+	collapsed.data = div.data;
+	collapsed.count = div.count / 3;
+	for 0..(div.count/3)-1 {
+		div[it] = div[it * 3 + 0];
+		div[it] += div[it * 3 + 1];
+		div[it] += div[it * 3 + 2];
+	}
+	return collapsed;
 }
 
 end_points :: (half_edge: Half_Edge, half_mesh: Half_Mesh, mesh: Mesh) -> (Vector3, Vector3) {
