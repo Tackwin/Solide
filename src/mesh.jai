@@ -65,6 +65,8 @@ Mesh :: struct {
 	div  : MKL.Sparse_Matrix;
 
 	laplace : MKL.Sparse_Matrix;
+	M : MKL.Sparse_Matrix;
+	Lc : MKL.Sparse_Matrix;
 
 	Vertex :: struct {
 		pos    : Vector3;
@@ -330,6 +332,8 @@ free :: (mesh : Mesh) {
 	MKL.free(mesh.hodge_star_2);
 	MKL.free(mesh.d0);
 	MKL.free(mesh.d1);
+	MKL.free(mesh.M);
+	MKL.free(mesh.Lc);
 	MKL.free(mesh.laplace);
 	MKL.free(mesh.grad);
 	MKL.free(mesh.div);
@@ -350,6 +354,8 @@ build_matrices :: (half_mesh: Half_Mesh, mesh: *Mesh) {
 	mesh.hodge_star_2 = build_hodge_star_2(half_mesh, mesh);
 	mesh.d0 = build_d0(mesh);
 	mesh.d1 = build_d1(mesh);
+	mesh.M = build_mass(half_mesh, mesh);
+	mesh.Lc = build_lc(half_mesh, mesh);
 	mesh.laplace = build_laplace(half_mesh, mesh);
 	mesh.grad = build_grad(half_mesh, mesh);
 	mesh.div = build_div(half_mesh, mesh);
@@ -810,6 +816,7 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 	for i: 0..mesh.nvert-1 {
 
 		ui := 0.0;
+		a := 2 * barycentric_dual_area(i, half_mesh, mesh);
 
 		for * row { <<it = FLOAT32_MAX; }
 		for iterate_adjacent_faces(i, *half_mesh, *mesh) {
@@ -817,7 +824,6 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 			uj += cotan(it.out_half_edge, half_mesh, mesh);
 			if half_mesh.half_edges[it.out_half_edge].twin >= 0
 				uj += cotan(half_mesh.half_edges[it.out_half_edge].twin, half_mesh, mesh);
-			uj /= 2;
 
 			j := tip(it.out_half_edge, half_mesh);
 
@@ -831,6 +837,61 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 
 		for row if it != FLOAT32_MAX {
 			array_add(*col_idx, it_index);
+			array_add(*values, it / a);
+		}
+	}
+	array_add(*rows_start, values.count);
+
+	mat := MKL.create_sparse_matrix(mesh.nvert, mesh.nvert, rows_start, col_idx, values);
+	return mat;
+}
+
+build_mass :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows_start : [..] s64;
+	col_idx : [..] s64;
+	values : [..] float;
+
+	for i: 0..mesh.nvert-1 {
+		array_add(*rows_start, values.count);
+		array_add(*col_idx, i);
+		array_add(*values, barycentric_dual_area(i, half_mesh, mesh));
+	}
+	array_add(*rows_start, values.count);
+
+	return MKL.create_sparse_matrix(mesh.nvert, mesh.nvert, rows_start, col_idx, values);
+}
+
+build_lc :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
+	rows_start : [..] s64;
+	col_idx : [..] s64;
+	values : [..] float;
+
+	row := NewArray(mesh.nvert, float, allocator=temp);
+
+	for i: 0..mesh.nvert-1 {
+
+		ui := 0.0;
+
+		for * row { <<it = FLOAT32_MAX; }
+		for iterate_adjacent_faces(i, *half_mesh, *mesh) {
+			uj := 0.0;
+			uj += cotan(it.out_half_edge, half_mesh, mesh);
+			if half_mesh.half_edges[it.out_half_edge].twin >= 0
+				uj += cotan(half_mesh.half_edges[it.out_half_edge].twin, half_mesh, mesh);
+
+			j := tip(it.out_half_edge, half_mesh);
+
+			row[j] = -uj;
+			ui += uj;
+		}
+
+		row[i] = ui;
+
+		array_add(*rows_start, values.count);
+
+
+		for row if it != FLOAT32_MAX {
+			array_add(*col_idx, it_index);
 			array_add(*values, it);
 		}
 	}
@@ -839,6 +900,7 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 	mat := MKL.create_sparse_matrix(mesh.nvert, mesh.nvert, rows_start, col_idx, values);
 	return mat;
 }
+
 
 build_grad :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 	rows_start : [..] s64;
@@ -966,6 +1028,34 @@ collapse_div :: (div: [] float) -> [] float {
 		div[it] += div[it * 3 + 2];
 	}
 	return collapsed;
+}
+
+compute_div :: (X: [] Vector3, half_mesh: Half_Mesh, mesh: Mesh) -> [] float {
+	d := NewArray(mesh.nvert, float);
+
+	for v: 0..mesh.nvert-1 {
+		d[v] = 0;
+
+		a := mesh.vertices[v];
+		for iterate_adjacent_faces(v, *half_mesh, *mesh) {
+			twin_in_he := half_mesh.half_edges[it.in_half_edge].twin;
+			
+			b := mesh.vertices[tip(it.out_half_edge, half_mesh)];
+			c := mesh.vertices[tip(twin_in_he, half_mesh)];
+
+			e1 := b - a;
+			e2 := c - a;
+
+			t1 := cotan(it.out_half_edge, half_mesh, mesh);
+			t2 := cotan(twin_in_he, half_mesh, mesh);
+
+			d[v] += t1 * dot(e1, X[it.face]) + t2 * dot(e2, X[it.face]);
+		}
+
+		d[v] /= 2;
+	}
+
+	return d;
 }
 
 end_points :: (half_edge: Half_Edge, half_mesh: Half_Mesh, mesh: Mesh) -> (Vector3, Vector3) {

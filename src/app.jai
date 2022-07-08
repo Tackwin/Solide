@@ -544,14 +544,12 @@ trigger_heat_iteration :: (ui: *Ui_State, r: *GetRect.Rect) -> bool {
 
 compute_heat_iteration :: (ui: *Ui_State, scene: *Scene_State) {
 	if !ui.run_heat_iteration return;
-	for 0..99 {
 		for scene.mesh.vertex_visible if it then scene.heat[it_index] = 2 * ((it_index % 2) - 0.5);
 
 		dt := MKL.mul(scene.mesh.laplace, scene.heat);
 		defer array_free(dt);
 
 		for scene.heat scene.heat[it_index] -= dt[it_index] * 0.01;
-	}
 
 	min_t := -1.0;
 	max_t := +1.0;
@@ -580,12 +578,10 @@ compute_heat_method :: (ui: *Ui_State, scene: *Scene_State) {
 
 	u0 := NewArray(scene.mesh.nvert, float, allocator=temp);
 
-	for 0..999 {
-		for scene.mesh.vertex_visible if it then u0[it_index] = 2 * ((it_index % 2) - 0.5);
-		scene.heat = Geometry.heat_method(u0, scene.mesh);
+	for scene.mesh.vertex_visible if it then u0[it_index] = 2 * ((it_index % 2) - 0.5);
+	scene.heat = Geometry.heat_method(u0, scene.mesh);
 
-		for * u0 { <<it = scene.heat[it_index]; };
-	}
+	for * u0 { <<it = scene.heat[it_index]; };
 
 	min_t := -1.0;
 	max_t := +1.0;
@@ -702,7 +698,7 @@ compute_div :: (ui: *Ui_State, scene: *Scene_State) {
 	array_free(scene.heat);
 	before := array_copy(scene.heat);
 	for * scene.face_arrows { <<it = normalize(<<it, fallback=.{1, 0, 0}); }
-	scene.heat = Geometry.div(scene.face_arrows, scene.mesh);
+	scene.heat = compute_div(scene.face_arrows, scene.half_mesh, scene.mesh);
 	scene.face_arrows.count = 0;
 
 	min_t := +FLOAT32_MAX;

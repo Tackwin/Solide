@@ -303,15 +303,16 @@ solve :: (u: [] float, problem: Scalar_Problem) -> [] float {
 }
 
 heat_method :: (u0: [] float, mesh: Mesh) -> [] float {
-	t := 1.0;
+	t := 0.0;
 	for mesh.edges {
 		t += distance(mesh.vertices[it.a], mesh.vertices[it.b]);
 	}
 	t /= mesh.nedge;
+	t *= t;
 
 	id := MKL.identity(mesh.nvert);
 	// defer MKL.free(id);
-	A := MKL.fmadd(t, mesh.laplace, id);
+	A := MKL.fmadd(t, mesh.Lc, mesh.M);
 	// defer MKL.free(A);
 
 	return MKL.solve(A, u0);
@@ -346,8 +347,8 @@ div :: (x: [] Vector3, mesh: Mesh) -> [] float {
 }
 
 poisson :: (b: [] float, mesh: Mesh) -> [] float {
-	bb := MKL.mul(mesh.hodge_star_0, b);
-	defer array_free(bb);
+	// bb := MKL.mul(mesh.hodge_star_0, b);
+	// defer array_free(bb);
 
-	return MKL.solve(mesh.laplace, bb);
+	return MKL.solve(mesh.Lc, b);
 }
