@@ -827,8 +827,8 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 
 			j := tip(it.out_half_edge, half_mesh);
 
-			row[j] = -uj;
-			ui += uj;
+			row[j] = uj;
+			ui -= uj;
 		}
 
 		row[i] = ui;
@@ -837,7 +837,7 @@ build_laplace :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 
 		for row if it != FLOAT32_MAX {
 			array_add(*col_idx, it_index);
-			array_add(*values, it / a);
+			array_add(*values, it);
 		}
 	}
 	array_add(*rows_start, values.count);
@@ -881,8 +881,8 @@ build_lc :: (half_mesh: Half_Mesh, mesh: Mesh) -> MKL.Sparse_Matrix {
 
 			j := tip(it.out_half_edge, half_mesh);
 
-			row[j] = -uj;
-			ui += uj;
+			row[j] = uj;
+			ui -= uj;
 		}
 
 		row[i] = ui;
@@ -1043,11 +1043,11 @@ compute_div :: (X: [] Vector3, half_mesh: Half_Mesh, mesh: Mesh) -> [] float {
 			b := mesh.vertices[tip(it.out_half_edge, half_mesh)];
 			c := mesh.vertices[tip(twin_in_he, half_mesh)];
 
-			e1 := b - a;
-			e2 := c - a;
+			e1 := a - b;
+			e2 := a - c;
 
 			t1 := cotan(it.out_half_edge, half_mesh, mesh);
-			t2 := cotan(twin_in_he, half_mesh, mesh);
+			t2 := cotan(it.in_half_edge, half_mesh, mesh);
 
 			d[v] += t1 * dot(e1, X[it.face]) + t2 * dot(e2, X[it.face]);
 		}

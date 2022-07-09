@@ -544,12 +544,14 @@ trigger_heat_iteration :: (ui: *Ui_State, r: *GetRect.Rect) -> bool {
 
 compute_heat_iteration :: (ui: *Ui_State, scene: *Scene_State) {
 	if !ui.run_heat_iteration return;
+	for 0..99 {
 		for scene.mesh.vertex_visible if it then scene.heat[it_index] = 2 * ((it_index % 2) - 0.5);
 
 		dt := MKL.mul(scene.mesh.laplace, scene.heat);
 		defer array_free(dt);
 
-		for scene.heat scene.heat[it_index] -= dt[it_index] * 0.01;
+		for scene.heat scene.heat[it_index] += dt[it_index] * 0.01;
+	}
 
 	min_t := -1.0;
 	max_t := +1.0;
@@ -738,7 +740,7 @@ compute_poisson :: (ui: *Ui_State, scene: *Scene_State) {
 	}
 
 	for scene.heat {
-		c := Color.map((it - min_t) / (max_t - min_t), Color.Seismic_Color_Map);
+		c := Color.log_map((it - min_t) / (max_t - min_t), Color.Seismic_Color_Map);
 		scene.mesh.vertex_colors[it_index] = c;
 	}
 

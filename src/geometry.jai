@@ -312,7 +312,7 @@ heat_method :: (u0: [] float, mesh: Mesh) -> [] float {
 
 	id := MKL.identity(mesh.nvert);
 	// defer MKL.free(id);
-	A := MKL.fmadd(t, mesh.Lc, mesh.M);
+	A := MKL.fmadd(t, mesh.laplace, id);
 	// defer MKL.free(A);
 
 	return MKL.solve(A, u0);
